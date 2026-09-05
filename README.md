@@ -43,6 +43,9 @@ deployed autonomous service.
 - database-enforced, expiring capability grants; live host registration and
   heartbeats; per-resource-class capacity admission; and immutable worker-run
   and process-journal schema
+- storage-only filesystem writer leases with retained workspace, exact-case
+  branch and physical Git-directory exclusion; expiry never frees a writer,
+  and release requires a sealed stop plus a terminal run (not yet launcher-wired)
 - immutable node-context revisions and identity-only, transactionally assembled
   context packets, with current-reference checks, exact retry/deadline admission,
   and cancellation fencing
