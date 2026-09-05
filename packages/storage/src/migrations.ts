@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
+import type { QueryResult, QueryResultRow } from "pg";
 
 import type { ConnectionPool, QueryExecutor } from "./database.ts";
 
@@ -68,12 +69,10 @@ export async function applyMigrations(
   directory: string,
 ): Promise<MigrationResult> {
   const migrations = await loadMigrations(directory);
-  const client = await pool.connect();
   const applied: string[] = [];
   const alreadyApplied: string[] = [];
 
-  try {
-    await client.query("SELECT pg_advisory_lock(hashtext($1))", [migrationLockKey]);
+  await withMigrationSession(pool, async (client) => {
     for (const migration of migrations) {
       const recorded = await findRecordedMigration(client, migration.version);
       if (recorded !== undefined) {
@@ -92,30 +91,22 @@ export async function applyMigrations(
       }
 
       await client.query("BEGIN");
-      try {
-        await client.query(migration.sql);
-        await client.query(
-          `INSERT INTO acp.schema_migrations (
+      await client.query(migration.sql);
+      await client.query(
+        `INSERT INTO acp.schema_migrations (
              version, name, checksum_sha256, down_checksum_sha256
            ) VALUES ($1, $2, $3, $4)`,
-          [
-            migration.version,
-            migration.name,
-            migration.checksumSha256,
-            migration.downChecksumSha256,
-          ],
-        );
-        await client.query("COMMIT");
-        applied.push(migration.version);
-      } catch (error) {
-        await client.query("ROLLBACK");
-        throw error;
-      }
+        [
+          migration.version,
+          migration.name,
+          migration.checksumSha256,
+          migration.downChecksumSha256,
+        ],
+      );
+      await client.query("COMMIT");
+      applied.push(migration.version);
     }
-  } finally {
-    await client.query("SELECT pg_advisory_unlock(hashtext($1))", [migrationLockKey]);
-    client.release();
-  }
+  });
 
   return { applied, alreadyApplied };
 }
@@ -125,11 +116,9 @@ export async function rollbackMigrations(
   directory: string,
 ): Promise<readonly string[]> {
   const migrations = (await loadMigrations(directory)).reverse();
-  const client = await pool.connect();
   const rolledBack: string[] = [];
 
-  try {
-    await client.query("SELECT pg_advisory_lock(hashtext($1))", [migrationLockKey]);
+  await withMigrationSession(pool, async (client) => {
     for (const migration of migrations) {
       const recorded = await findRecordedMigration(client, migration.version);
       if (recorded === undefined) continue;
@@ -143,24 +132,40 @@ export async function rollbackMigrations(
       }
 
       await client.query("BEGIN");
-      try {
-        await client.query("DELETE FROM acp.schema_migrations WHERE version = $1", [
-          migration.version,
-        ]);
-        await client.query(migration.downSql);
-        await client.query("COMMIT");
-        rolledBack.push(migration.version);
-      } catch (error) {
-        await client.query("ROLLBACK");
-        throw error;
-      }
+      await client.query("DELETE FROM acp.schema_migrations WHERE version = $1", [
+        migration.version,
+      ]);
+      await client.query(migration.downSql);
+      await client.query("COMMIT");
+      rolledBack.push(migration.version);
     }
-  } finally {
-    await client.query("SELECT pg_advisory_unlock(hashtext($1))", [migrationLockKey]);
-    client.release();
-  }
+  });
 
   return rolledBack;
+}
+
+async function withMigrationSession<T>(pool: ConnectionPool, operation: (client: QueryExecutor) => Promise<T>): Promise<T> {
+  const client = await pool.connect();
+  let failure: Error | undefined;
+  const failed = (error: Error) => { failure ??= error; };
+  client.on?.("error", failed);
+  const guarded: QueryExecutor = { async query<R extends QueryResultRow>(text: string, values?: unknown[]): Promise<QueryResult<R>> {
+    if (failure) throw failure;
+    const result = await client.query<R>(text, values);
+    if (failure) throw failure;
+    return result;
+  } };
+  try {
+    // Keep the existing namespace so old and new runners still serialize.
+    await guarded.query("SELECT pg_advisory_lock(hashtext($1))", [migrationLockKey]);
+    return await operation(guarded);
+  } finally {
+    // Migrations are infrequent and always use a disposable physical session.
+    // Closing it rolls back an uncertain/open transaction and releases every
+    // reentrant session lock. Never pool it or issue cleanup SQL after failure.
+    try { client.release(true); }
+    finally { client.off?.("error", failed); }
+  }
 }
 
 async function findRecordedMigration(

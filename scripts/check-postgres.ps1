@@ -6,6 +6,7 @@ param(
   [switch]$LaunchNative,
   [switch]$FilesystemBindings,
   [switch]$FilesystemNative,
+  [switch]$MigrationSessions,
   [Parameter(DontShow)]
   [switch]$Internal,
   [Parameter(DontShow)]
@@ -18,6 +19,7 @@ if ($LaunchNative -and (-not $LaunchRecovery -or -not $LifecycleOnly)) { throw '
 if ($HostOnly -and ($LifecycleOnly -or $LaunchRecovery)) { throw 'HostOnly cannot be combined with LifecycleOnly or LaunchRecovery' }
 if ($FilesystemBindings -and (-not $LifecycleOnly -or -not $LaunchRecovery -or $LaunchNative)) { throw 'FilesystemBindings requires LifecycleOnly and LaunchRecovery, without LaunchNative' }
 if ($FilesystemNative -and -not $FilesystemBindings) { throw 'FilesystemNative requires FilesystemBindings' }
+if ($MigrationSessions -and ($LifecycleOnly -or $HostOnly -or $LaunchRecovery -or $LaunchNative -or $FilesystemBindings -or $FilesystemNative)) { throw 'MigrationSessions is a standalone bounded gate' }
 
 function Invoke-BoundedDocker {
   param(
@@ -89,6 +91,7 @@ if (-not $Internal) {
   if ($HostOnly) { $commandLine += ' -HostOnly' }
   if ($FilesystemBindings) { $commandLine += ' -FilesystemBindings' }
   if ($FilesystemNative) { $commandLine += ' -FilesystemNative' }
+  if ($MigrationSessions) { $commandLine += ' -MigrationSessions' }
   $integrationProcess = $null
 
   try {
@@ -293,6 +296,11 @@ try {
       if ($checkProcess.ExitCode -ne 0) { throw "$Label failed" }
     }
     finally { $checkProcess.Dispose() }
+  }
+  if ($MigrationSessions) {
+    Invoke-AcpNodeCheck 'packages/storage/test/integration/migration-sessions.ts' 'Migration session integration' -TimeoutSeconds 30
+    Write-Host 'Migration session integration passed; removing only the owned disposable database container.'
+    return
   }
   Invoke-AcpNodeCheck 'packages/storage/test/integration/context-store.ts' 'Authoritative context integration'
   Invoke-AcpSqlFile 'packages/storage/migrations/0006_host_dispatch.sql' '0006 populated upgrade'

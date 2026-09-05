@@ -92,6 +92,7 @@ npm run check
 pwsh -NoProfile -File scripts/check-postgres.ps1
 pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly
 pwsh -NoProfile -File scripts/check-postgres.ps1 -HostOnly
+pwsh -NoProfile -File scripts/check-postgres.ps1 -MigrationSessions
 pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery
 pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery -LaunchNative
 pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery -FilesystemBindings
@@ -170,3 +171,11 @@ not fit that budget; pair it with `-LifecycleOnly` for migration rollback covera
 
 No commit, push, deployment, or external integration is performed by these
 commands.
+
+Migration runners use a disposable physical database session. Closing that
+session releases all session locks and rolls back any uncommitted transaction,
+including after a lost BEGIN/COMMIT acknowledgement; it is never returned to the
+pool. The lock namespace and migration checksums are unchanged. The standalone
+`-MigrationSessions` gate tests normal/reentrant cleanup, real connection loss,
+uncertain responses, checksum rejection and concurrent-runner serialization in
+an additional database owned by the disposable integration container.

@@ -60,7 +60,7 @@ describe("initial PostgreSQL migration contract", () => {
     assert.match(sql, /Transaction ownership belongs to the migration runner/u);
     assert.match(runner, /await client\.query\("BEGIN"\)/u);
     assert.match(runner, /await client\.query\("COMMIT"\)/u);
-    assert.match(runner, /await client\.query\("ROLLBACK"\)/u);
+    assert.match(runner, /client\.release\(true\)/u); // Physical session disposal rolls back uncertain transactions.
     assert.match(sql, /CREATE TABLE acp\.missions/u);
     assert.match(sql, /CREATE TABLE acp\.candidate_records/u);
     assert.match(sql, /CREATE TABLE acp\.deployment_records/u);
