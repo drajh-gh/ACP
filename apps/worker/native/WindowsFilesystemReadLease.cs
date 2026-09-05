@@ -29,8 +29,10 @@ public sealed class WindowsFilesystemReadLease : IDisposable
         {
             foreach (string path in paths)
             {
+                // FILE_LIST_DIRECTORY participates in share-access checks;
+                // metadata-only (zero-access) handles do not prevent rename.
                 // OPEN_REPARSE_POINT, BACKUP_SEMANTICS; no DELETE sharing on any ancestor.
-                var handle = CreateFile(path, 0, 3, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
+                var handle = CreateFile(path, 1, 3, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
                 if (handle.IsInvalid) { handle.Dispose(); Fail(); }
                 lease.handles.Add(handle);
                 if (!GetFileInformationByHandle(handle, out FileInformation info)) Fail();
@@ -67,15 +69,16 @@ public sealed class WindowsFilesystemReadLease : IDisposable
 
     // The caller must already pin the file's parent directory. Sharing READ only
     // rejects a pre-existing writer and prevents replace/write while inspected.
-    public FileStream PinFile(string leaf)
+    public FileStream PinFile(string leaf, int maximumBytes = 4096)
     {
-        if (string.IsNullOrEmpty(leaf) || leaf.IndexOfAny(new[] { '\\', '/', ':' }) >= 0 || leaf == "." || leaf == "..") throw new ArgumentException("one metadata filename required");
+        ValidateLeaf(leaf);
+        if (maximumBytes < 1 || maximumBytes > 16384) throw new ArgumentException("bounded metadata limit required");
         var handle = CreateFile(System.IO.Path.Combine(Path, leaf), 0x80000000, 1, IntPtr.Zero, 3, 0x00200080, IntPtr.Zero);
         if (handle.IsInvalid) { handle.Dispose(); Fail(); }
         try
         {
             if (!GetFileInformationByHandle(handle, out FileInformation info)) Fail();
-            if ((info.Attributes & (0x400u | 0x10u)) != 0 || info.NumberOfLinks != 1 || info.SizeHigh != 0 || info.SizeLow > 4096)
+            if ((info.Attributes & (0x400u | 0x10u)) != 0 || info.NumberOfLinks != 1 || info.SizeHigh != 0 || info.SizeLow > maximumBytes)
                 throw new InvalidOperationException("bounded single-link metadata file required");
             return new FileStream(handle, FileAccess.Read, 4096, false);
         }
@@ -84,10 +87,25 @@ public sealed class WindowsFilesystemReadLease : IDisposable
 
     public void RequireAbsent(string leaf)
     {
-        if (string.IsNullOrEmpty(leaf) || leaf.IndexOfAny(new[] { '\\','/',':' }) >= 0) throw new ArgumentException("one metadata filename required");
+        if (!ChildAbsent(leaf)) throw new InvalidOperationException("required child absence not observed");
+    }
+
+    // A missing child is the only null result. Access denial, a missing parent,
+    // reparse points and unsupported objects remain errors, never absence.
+    public WindowsFilesystemReadLease DirectoryChildOrAbsent(string leaf) => ChildAbsent(leaf) ? null : Directory(System.IO.Path.Combine(Path,leaf));
+    public FileStream PinFileOrAbsent(string leaf, int maximumBytes = 4096) => ChildAbsent(leaf) ? null : PinFile(leaf,maximumBytes);
+    private bool ChildAbsent(string leaf)
+    {
+        ValidateLeaf(leaf);
         uint attributes = GetFileAttributes(System.IO.Path.Combine(Path,leaf));
-        if (attributes != uint.MaxValue) throw new InvalidOperationException("unsupported filesystem redirection metadata");
-        if (Marshal.GetLastWin32Error() != 2) Fail(); // Only exact file absence, never access-denied inference.
+        if (attributes != uint.MaxValue) return false;
+        if (Marshal.GetLastWin32Error() != 2) Fail();
+        return true;
+    }
+    private void ValidateLeaf(string leaf)
+    {
+        if (string.IsNullOrEmpty(leaf) || leaf.IndexOfAny(new[] { '\\','/',':' }) >= 0 || leaf == "." || leaf == "..") throw new ArgumentException("one metadata filename required");
+        ValidatePath(System.IO.Path.Combine(Path,leaf));
     }
 
     public static string ReadText(FileStream file)

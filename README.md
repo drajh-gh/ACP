@@ -52,6 +52,9 @@ deployed autonomous service.
 - immutable storage-only provisioner attempt plans with exact hold revision,
   base and reported parent/fence intent; expiry or drift retains history and
   no native creation, retry, cleanup or execution authority is enabled
+- standalone read-only native provisioner preflight for exact parent identity,
+  full commit and bounded branch/target absence; no retained reservation,
+  database-plan consumer or permission to modify Git is implied
 - immutable node-context revisions and identity-only, transactionally assembled
   context packets, with current-reference checks, exact retry/deadline admission,
   and cancellation fencing
@@ -133,6 +136,8 @@ npm run test:worker-supervision
 pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite launch-fence
 pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite filesystem
 pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite filesystem-pins
+pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite provisioner-observation -TestNamePattern '^preflight (core|paths|branches):'
+pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite provisioner-observation -TestNamePattern '^preflight (metadata|limits|races|cancellation):'
 pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite lease-channel
 pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite lease-channel-liveness
 pwsh -NoProfile -File scripts/check-native-fixture-cleanup.ps1
@@ -217,6 +222,11 @@ and test inert immutable attempt plans, expiry/race denial, history-preserving
 downgrade and predecessor target holds. Directory identities and paths are
 synthetic metadata; no native fence or worktree is created. See
 [the provisioner-plan contract](docs/architecture/0017-inert-provisioner-plans.md).
+The two `provisioner-observation` phases run sequentially in disposable native
+Git fixtures, checking actual parent/base/absence, case/prefix conflicts, bounded
+metadata, deterministic between-check mutations and process/pin cleanup. The
+suite requires a bounded `TestNamePattern`; it is not connected to database
+plans or creation. See [the observation contract](docs/architecture/0018-provisioner-target-observation.md).
 The three `FilesystemLeaseChannelNative` phases are focused, model-free real
 database/native lifecycle checks. Each applies the seeded schema through 0014,
 then runs only its selected scenario; predecessor suites remain separate gates.

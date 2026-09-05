@@ -1,5 +1,6 @@
-param([switch]$Internal, [ValidateSet('supervision', 'launch-fence', 'filesystem', 'filesystem-pins', 'lease-watchdog', 'lease-liveness', 'lease-bootstrap', 'lease-channel', 'lease-channel-liveness')][string]$Suite = 'supervision', [string]$TestNamePattern, [string]$OwnedFixtureRun)
+param([switch]$Internal, [ValidateSet('supervision', 'launch-fence', 'filesystem', 'filesystem-pins', 'provisioner-observation', 'lease-watchdog', 'lease-liveness', 'lease-bootstrap', 'lease-channel', 'lease-channel-liveness')][string]$Suite = 'supervision', [string]$TestNamePattern, [string]$OwnedFixtureRun)
 $ErrorActionPreference = 'Stop'
+if ($Suite -eq 'provisioner-observation' -and -not $TestNamePattern) { throw 'Select a bounded provisioner observation phase with -TestNamePattern; see README.' }
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'native-channel-fixture.ps1')
 if (-not $Internal) {
@@ -12,13 +13,13 @@ if (-not $Internal) {
   $fixtureRoot = $null
   $empty = $false
   try {
-    if ($Suite -eq 'filesystem-pins') {
+    if ($Suite -in @('filesystem-pins', 'provisioner-observation')) {
       $OwnedFixtureRun = [guid]::NewGuid().ToString('D')
       $pendingRoot = Get-AcpNativeChannelRoot $OwnedFixtureRun
       New-Item -ItemType Directory -Path $pendingRoot | Out-Null
       $fixtureRoot = $pendingRoot
       $gateArguments += ' -OwnedFixtureRun ' + $OwnedFixtureRun
-      Write-Host "Owned linked pin fixture: $fixtureRoot"
+      Write-Host "Owned $Suite fixture: $fixtureRoot"
     }
     $ownedGate = [Acp.Integration.WindowsKillOnCloseJob]::Start($pwshPath, $gateArguments, $repositoryRoot)
     Write-Output "Owned PID $($ownedGate.ProcessId): Windows $Suite integration (90-second limit)"
@@ -41,7 +42,7 @@ if (-not $Internal) {
   exit 0
 }
 Set-Location -LiteralPath $repositoryRoot
-if ($Suite -eq 'filesystem') {
+if ($Suite -in @('filesystem', 'provisioner-observation')) {
   Add-Type -Path @('apps/worker/native/WindowsWorkerScope.cs', 'apps/worker/native/WindowsFilesystemReadLease.cs', 'apps/worker/native/WindowsRepositoryObserver.cs', 'apps/worker/native/WindowsWorkerJob.cs')
 } else { Add-Type -Path 'apps/worker/native/WindowsWorkerJob.cs' }
 $nodePath = (Get-Command node -CommandType Application | Select-Object -First 1).Source
@@ -50,12 +51,13 @@ $testInfo.UseShellExecute = $false
 $testInfo.CreateNoWindow = $true
 $testInfo.RedirectStandardOutput = $true
 $testInfo.RedirectStandardError = $true
-if ($Suite -in @('filesystem', 'filesystem-pins')) { $testInfo.Environment['ACP_TEST_GIT'] = (Get-Command git -CommandType Application | Select-Object -First 1).Source }
-if ($Suite -eq 'filesystem-pins') { $testInfo.Environment['ACP_TEST_NATIVE_CHANNEL_ROOT'] = Get-AcpNativeChannelRoot $OwnedFixtureRun }
+if ($Suite -in @('filesystem', 'filesystem-pins', 'provisioner-observation')) { $testInfo.Environment['ACP_TEST_GIT'] = (Get-Command git -CommandType Application | Select-Object -First 1).Source }
+if ($Suite -in @('filesystem-pins', 'provisioner-observation')) { $testInfo.Environment['ACP_TEST_NATIVE_CHANNEL_ROOT'] = Get-AcpNativeChannelRoot $OwnedFixtureRun }
 $testFile = switch ($Suite) {
   'launch-fence' { 'apps/worker/test/integration/windows-launch-fence.test.ts' }
   'filesystem' { 'apps/worker/test/integration/windows-filesystem.test.ts' }
   'filesystem-pins' { 'apps/worker/test/integration/windows-linked-worktree-pins.test.ts' }
+  'provisioner-observation' { 'apps/worker/test/integration/windows-provisioner-observation.test.ts' }
   'lease-watchdog' { 'apps/worker/test/integration/windows-lease-watchdog.test.ts' }
   'lease-liveness' { 'apps/worker/test/integration/windows-lease-watchdog.test.ts' }
   'lease-bootstrap' { 'apps/worker/test/integration/windows-lease-watchdog.test.ts' }

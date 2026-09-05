@@ -18,6 +18,72 @@ export type WindowsWorktreeObservation = { readonly state: "unconfirmed" } | {
   readonly workspace: WindowsDirectoryBinding; readonly gitDirectory: WindowsDirectoryBinding;
   readonly branchRef: string; readonly headRevision: string; readonly observedAt: string;
 };
+export interface WindowsProvisionerTargetInput {
+  readonly workspacePath:string;
+  readonly branchRef:string;
+  readonly baseRevision:string;
+}
+/** Sequential read-only observations, not an atomic snapshot, retained pins,
+ * absence reservation, configured creation authority or a successful worktree. */
+export type WindowsProvisionerTargetObservation = { readonly state:"unconfirmed" } | {
+  readonly state:"observed";readonly kind:"provisioner_target";readonly scope:"observation_only";
+  readonly machineFingerprint:string;readonly checkout:WindowsDirectoryBinding;readonly commonGitDirectory:WindowsDirectoryBinding;
+  readonly parent:WindowsDirectoryBinding;readonly workspacePath:string;readonly branchRef:string;readonly baseRevision:string;
+  readonly targetAbsent:true;readonly branchAbsent:true;readonly observedAt:string;
+};
+export function parseWindowsProvisionerTargetObservation(value:unknown):WindowsProvisionerTargetObservation {
+  try {
+    const v=exact(value,["state","kind","scope","machineFingerprint","checkout","commonGitDirectory","parent",
+      "workspacePath","branchRef","baseRevision","targetAbsent","branchAbsent","observedAt"]);
+    if(v.state!=="observed" || v.kind!=="provisioner_target" || v.scope!=="observation_only" || v.targetAbsent!==true || v.branchAbsent!==true
+      || typeof v.machineFingerprint!=="string" || !/^[0-9a-f]{64}$/u.test(v.machineFingerprint)
+      || typeof v.observedAt!=="string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(v.observedAt)
+      || !Number.isFinite(Date.parse(v.observedAt)) || new Date(v.observedAt).toISOString()!==v.observedAt) return { state:"unconfirmed" };
+    const checkout=parseWindowsDirectoryBinding(v.checkout),commonGitDirectory=parseWindowsDirectoryBinding(v.commonGitDirectory),
+      parent=parseWindowsDirectoryBinding(v.parent),input=parseWindowsProvisionerTargetInput({ workspacePath:v.workspacePath,branchRef:v.branchRef,baseRevision:v.baseRevision });
+    if(win32.dirname(input.workspacePath)!==parent.path || parent.identity===checkout.identity || parent.identity===commonGitDirectory.identity
+      || checkout.identity===commonGitDirectory.identity || win32.join(checkout.path,".git")!==commonGitDirectory.path
+      || overlaps(input.workspacePath,checkout.path) || overlaps(input.workspacePath,commonGitDirectory.path)) return { state:"unconfirmed" };
+    return { state:"observed",kind:"provisioner_target",scope:"observation_only",machineFingerprint:v.machineFingerprint,
+      checkout,commonGitDirectory,parent,...input,targetAbsent:true,branchAbsent:true,observedAt:v.observedAt };
+  } catch { return { state:"unconfirmed" }; }
+}
+
+/** Exact intent, not a native observation or base/branch creation policy. This
+ * first Windows layout limits branch depth to 16 and rejects Windows aliases. */
+export function parseWindowsProvisionerTargetInput(value:unknown):WindowsProvisionerTargetInput {
+  const v=exact(value,["workspacePath","branchRef","baseRevision"]);
+  if(typeof v.workspacePath!=="string" || typeof v.branchRef!=="string" || typeof v.baseRevision!=="string"
+    || !/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/u.test(v.baseRevision) || !v.branchRef.startsWith("refs/heads/")
+    || v.branchRef.length>1024 || /[\u0000-\u0020\u007f~^:?*\[\\]/u.test(v.branchRef) || v.branchRef.includes("..") || v.branchRef.includes("@{")) {
+    throw new TypeError("bounded canonical target and exact branch/full commit intent required");
+  }
+  const parts=v.branchRef.slice(11).split("/");
+  if(parts.length>16 || parts.some((part)=>!part || part.startsWith(".") || part.toLowerCase().endsWith(".lock"))) throw new TypeError("unsupported branch components");
+  validatePath("C:\\"+parts.join("\\")); validatePath(v.workspacePath); validatePath(win32.dirname(v.workspacePath));
+  return { workspacePath:v.workspacePath,branchRef:v.branchRef,baseRevision:v.baseRevision };
+}
+const overlaps=(left:string,right:string)=>left.toLowerCase()===right.toLowerCase()
+  || left.toLowerCase().startsWith(right.toLowerCase()+"\\") || right.toLowerCase().startsWith(left.toLowerCase()+"\\");
+function exact(value:unknown,keys:readonly string[]):Record<string,unknown> {
+  if(!value || typeof value!=="object" || Array.isArray(value) || Object.keys(value).sort().join()!==[...keys].sort().join()) throw new TypeError("exact observation fields required");
+  return value as Record<string,unknown>;
+}
+
+/** First discovery of an existing parent and absent prospective target. A
+ * positive result follows native cleanup; no absence remains guaranteed.
+ * Unconfirmed/aborted results are not descendant-empty stop receipts. */
+export async function observeWindowsProvisionerTarget(repository:RepositoryBindingInput,input:WindowsProvisionerTargetInput,signal:AbortSignal,
+  options:WindowsRepositoryObserverOptions):Promise<WindowsProvisionerTargetObservation> {
+  const binding=parseRepositoryBinding(repository),intent=parseWindowsProvisionerTargetInput(input); validateWindowsRepositoryObserverOptions(options);
+  if(overlaps(intent.workspacePath,binding.checkout.path) || overlaps(intent.workspacePath,binding.commonGitDirectory.path)) return { state:"unconfirmed" };
+  const result=parseWindowsProvisionerTargetObservation(await helper({ operation:"provisioner_target",repository:{
+    checkout:binding.checkout,commonGitDirectory:binding.commonGitDirectory,machineFingerprint:binding.machineFingerprint },...intent },signal,options));
+  if(result.state!=="observed") return result;
+  return result.machineFingerprint===binding.machineFingerprint && result.checkout.path===binding.checkout.path && result.checkout.identity===binding.checkout.identity
+    && result.commonGitDirectory.path===binding.commonGitDirectory.path && result.commonGitDirectory.identity===binding.commonGitDirectory.identity
+    && result.workspacePath===intent.workspacePath && result.branchRef===intent.branchRef && result.baseRevision===intent.baseRevision ? result : { state:"unconfirmed" };
+}
 
 /** Read-only observation. Does not register a binding, obtain a lease, or enable delivery. */
 export async function observeWindowsRepository(checkout: string, signal: AbortSignal,

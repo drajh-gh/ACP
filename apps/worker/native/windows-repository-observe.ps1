@@ -19,6 +19,11 @@ try {
     if ($repository.machineFingerprint -cne $actual.MachineFingerprint) { throw 'Wrong machine' }
     $result = $observer.Worktree($repository.checkout.path,$repository.checkout.identity,$repository.commonGitDirectory.path,
       $repository.commonGitDirectory.identity,$request.workspace,$actual.MachineFingerprint)
+  } elseif ($request.operation -eq 'provisioner_target') {
+    $repository = $request.repository
+    if ($repository.machineFingerprint -cne $actual.MachineFingerprint) { throw 'Wrong machine' }
+    $result = $observer.ProvisionerTarget($repository.checkout.path,$repository.checkout.identity,$repository.commonGitDirectory.path,
+      $repository.commonGitDirectory.identity,$request.workspacePath,$request.branchRef,$request.baseRevision,$actual.MachineFingerprint)
   } else { throw 'Unsupported observation' }
   [Console]::WriteLine('{"type":"observation","value":'+$result+'}')
 } catch {

@@ -69,9 +69,88 @@ public sealed class WindowsRepositoryObserver
         return JsonSerializer.Serialize(new { state = "confirmed", kind = "worktree", machineFingerprint = machine,
             workspace = Binding(workspace), gitDirectory = Binding(metadata), branchRef = branch, headRevision = revision, observedAt = Now() });
     }
-    private void Topology(WindowsFilesystemReadLease workspace, WindowsFilesystemReadLease metadata, WindowsFilesystemReadLease common)
+    // Sequential first-discovery facts only. These handles are all released
+    // before the caller receives an observation; this grants no Git authority.
+    public string ProvisionerTarget(string checkoutPath, string checkoutIdentity, string commonPath, string commonIdentity,
+        string workspacePath, string branchRef, string baseRevision, string machine)
     {
-        string[] lines = Git(workspace.Path,"rev-parse","--path-format=absolute","--show-toplevel","--git-dir","--git-common-dir").Split('\n');
+        WindowsFilesystemReadLease.ValidatePath(workspacePath);
+        string parentPath = Path.GetDirectoryName(workspacePath);
+        WindowsFilesystemReadLease.ValidatePath(parentPath);
+        ValidateBranch(branchRef);
+        if (baseRevision == null || !Regex.IsMatch(baseRevision,@"\A[0-9a-f]{40}([0-9a-f]{24})?\z")) throw new ArgumentException("full exact commit required");
+        using var checkout = WindowsFilesystemReadLease.Directory(checkoutPath);
+        using var common = WindowsFilesystemReadLease.Directory(commonPath);
+        if (checkout.Identity != checkoutIdentity || common.Identity != commonIdentity || checkout.Identity == common.Identity
+            || checkout.Path != checkoutPath || common.Path != commonPath || common.Path != Path.Combine(checkout.Path,".git")
+            || Equal(workspacePath,checkout.Path) || Nested(workspacePath,checkout.Path) || Nested(checkout.Path,workspacePath)
+            || Equal(workspacePath,common.Path) || Nested(workspacePath,common.Path) || Nested(common.Path,workspacePath)) throw new InvalidOperationException("isolated exact repository binding required");
+        using var head = common.PinFile("HEAD");
+        using var configuration = common.PinFile("config");
+        using var objectInfo = SupportedLayout(common,configuration);
+        using var parent = WindowsFilesystemReadLease.Directory(parentPath);
+        if (parent.Path != parentPath || parent.Identity == checkout.Identity || parent.Identity == common.Identity) throw new InvalidOperationException("canonical separate parent required");
+        using var packed = common.PinFileOrAbsent("packed-refs",16384);
+        var prefixes = new List<WindowsFilesystemReadLease>();
+        try
+        {
+            parent.RequireAbsent(Path.GetFileName(workspacePath));
+            Topology(checkout,common,common,true);
+            if (GitStrict(checkout.Path,"check-ref-format",branchRef) != "") throw new InvalidOperationException("unexpected ref-format output");
+            ObserveAbsentBranch(checkout,common,branchRef,prefixes);
+            if (GitStrict(checkout.Path,"rev-parse","--verify","--end-of-options",baseRevision+"^{commit}") != baseRevision)
+                throw new InvalidOperationException("base is not the exact existing commit object");
+            ObserveAbsentBranch(checkout,common,branchRef,prefixes);
+            if (packed == null) common.RequireAbsent("packed-refs");
+            parent.RequireAbsent(Path.GetFileName(workspacePath));
+            if (DateTime.UtcNow >= deadline) throw new TimeoutException();
+            return JsonSerializer.Serialize(new { state = "observed", kind = "provisioner_target", scope = "observation_only", machineFingerprint = machine,
+                checkout = Binding(checkout), commonGitDirectory = Binding(common), parent = Binding(parent), workspacePath, branchRef, baseRevision,
+                targetAbsent = true, branchAbsent = true, observedAt = Now() });
+        }
+        finally { for (int i=prefixes.Count-1;i>=0;i--) prefixes[i].Dispose(); }
+    }
+    private void ObserveAbsentBranch(WindowsFilesystemReadLease checkout, WindowsFilesystemReadLease common, string branch, List<WindowsFilesystemReadLease> pins)
+    {
+        string output = GitStrict(checkout.Path,"for-each-ref","--count=201","--sort=refname","--format=%(refname)","refs/heads/");
+        string[] refs = output.Length == 0 ? Array.Empty<string>() : output.Split('\n');
+        if (refs.Length > 200 || refs.Distinct(StringComparer.Ordinal).Count() != refs.Length) throw new InvalidOperationException("bounded distinct head inventory required");
+        foreach (string existing in refs)
+        {
+            ValidateBranch(existing);
+            string[] left = branch.Split('/'), right = existing.Split('/');
+            int i=0;
+            for (;i<Math.Min(left.Length,right.Length);i++)
+            {
+                if (!string.Equals(left[i],right[i],StringComparison.OrdinalIgnoreCase)) break;
+                if (left[i] != right[i]) throw new InvalidOperationException("branch component case collision");
+            }
+            if (i == Math.Min(left.Length,right.Length)) throw new InvalidOperationException("branch already exists or has a prefix collision");
+        }
+        // Enumeration can omit malformed/dangling loose refs. Walk actual
+        // native components too, pinning every existing prefix until return.
+        string[] parts = branch.Split('/'); var directory = common;
+        for (int i=0;i<parts.Length-1;i++)
+        {
+            var child = directory.DirectoryChildOrAbsent(parts[i]);
+            if (child == null) return;
+            pins.Add(child);
+            if (child.Path != Path.Combine(directory.Path,parts[i])) throw new InvalidOperationException("loose branch spelling is not ordinal canonical");
+            directory = child;
+        }
+        directory.RequireAbsent(parts[parts.Length-1]);
+    }
+    private static void ValidateBranch(string branch)
+    {
+        if (branch == null || !branch.StartsWith("refs/heads/",StringComparison.Ordinal) || branch.Length > 1024
+            || Regex.IsMatch(branch,@"[\x00-\x20\x7f~^:?*\[\\]") || branch.Contains("..") || branch.Contains("@{")) throw new ArgumentException("bounded exact branch required");
+        string[] parts = branch.Substring(11).Split('/');
+        if (parts.Length > 16 || parts.Any(part => part.Length == 0 || part.StartsWith(".",StringComparison.Ordinal) || part.EndsWith(".lock",StringComparison.OrdinalIgnoreCase))) throw new ArgumentException("unsupported branch components");
+        WindowsFilesystemReadLease.ValidatePath("C:\\"+string.Join("\\",parts));
+    }
+    private void Topology(WindowsFilesystemReadLease workspace, WindowsFilesystemReadLease metadata, WindowsFilesystemReadLease common, bool strict = false)
+    {
+        string[] lines = GitOutput(workspace.Path,strict,new[] { "rev-parse","--path-format=absolute","--show-toplevel","--git-dir","--git-common-dir" }).Split('\n');
         if (lines.Length != 3 || !Equal(lines[0],workspace.Path) || !Equal(lines[1],metadata.Path) || !Equal(lines[2],common.Path)) throw new InvalidOperationException("Git topology disagrees with native handles");
         using var reportedWorkspace = WindowsFilesystemReadLease.Directory(Path.GetFullPath(lines[0]));
         using var reportedMetadata = WindowsFilesystemReadLease.Directory(Path.GetFullPath(lines[1]));
@@ -107,6 +186,10 @@ public sealed class WindowsRepositoryObserver
         catch { info.Dispose(); throw; }
     }
     private string Git(string workspace, params string[] command)
+        => GitOutput(workspace,false,command);
+    private string GitStrict(string workspace, params string[] command)
+        => GitOutput(workspace,true,command);
+    private string GitOutput(string workspace, bool strict, string[] command)
     {
         if (DateTime.UtcNow >= deadline) throw new TimeoutException();
         var args = new[] { "--no-pager", "--no-optional-locks", "--no-replace-objects", "--no-lazy-fetch",
@@ -131,12 +214,30 @@ public sealed class WindowsRepositoryObserver
             // A completed root is insufficient: close and confirm all descendants.
             if (!job.TerminateAndWait(2000)) throw new InvalidOperationException("Git tree cleanup unconfirmed");
             if (!Task.WaitAll(new Task[] { output,error },2000)) throw new TimeoutException("Git pipe cleanup unconfirmed");
-            if (exit != 0) throw new InvalidOperationException("Git read failed");
-            return new UTF8Encoding(false,true).GetString(output.Result).TrimEnd('\r','\n');
+            if (exit != 0 || (strict && error.Result.Length != 0)) throw new InvalidOperationException("Git read failed or warned");
+            string text = new UTF8Encoding(false,true).GetString(output.Result);
+            if (!strict) return text.TrimEnd('\r','\n');
+            text = text.Replace("\r\n","\n");
+            if (text.IndexOfAny(new[] { '\r','\0' }) >= 0) throw new InvalidOperationException("invalid Git output");
+            return text.EndsWith("\n",StringComparison.Ordinal) ? text.Substring(0,text.Length-1) : text;
         }
         finally
         {
-            if (!job.TerminateAndWait(2000)) throw new InvalidOperationException("Git tree cleanup unconfirmed");
+            // A deadline or faulted bounded reader skips the normal exit path.
+            // Even a thrown stop call must attempt bounded reader settlement.
+            try
+            {
+                if (!job.TerminateAndWait(2000)) throw new InvalidOperationException("Git tree cleanup unconfirmed");
+            }
+            finally
+            {
+                var readers = Task.WhenAll(output,error);
+                bool settled;
+                try { settled = readers.Wait(2000); }
+                catch (AggregateException) { settled = readers.IsCompleted; }
+                if (!settled) throw new InvalidOperationException("Git pipe cleanup unconfirmed");
+                if (readers.IsFaulted || readers.IsCanceled) throw new InvalidOperationException("Git pipe observation failed");
+            }
         }
     }
     private static async Task<byte[]> ReadBounded(Stream stream)
