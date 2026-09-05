@@ -81,6 +81,9 @@ deployed autonomous service.
   size-bounded Streamable HTTP MCP control surface for
   idempotent mission creation, exact mission status, and bounded active-mission
   listing
+- a bounded, single-statement mission-status snapshot with independent recorded
+  lifecycle dimensions, exact applied/latest evaluations and metadata-only
+  evidence; no inferred freshness, completion, approval or execution authority
 - a validated repository-local Codex counterpart plugin package whose
   marketplace entry, deployment URL, and bearer-token environment reference are
   deliberately left for deployment/installation
@@ -102,6 +105,9 @@ pwsh -NoProfile -File scripts/check-postgres.ps1
 pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly
 pwsh -NoProfile -File scripts/check-postgres.ps1 -HostOnly
 pwsh -NoProfile -File scripts/check-postgres.ps1 -MigrationSessions
+pwsh -NoProfile -File scripts/check-postgres.ps1 -CounterpartStatus core
+pwsh -NoProfile -File scripts/check-postgres.ps1 -CounterpartStatus limits
+pwsh -NoProfile -File scripts/check-postgres.ps1 -CounterpartStatus snapshot
 pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery
 pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery -LaunchNative
 pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery -FilesystemBindings
@@ -193,6 +199,11 @@ synthetic filesystem/process identities. They check pre-run holds, race and
 expiry fencing, migration backfill/rollback, and existing writer regression.
 They create no native worktree or provisioner and grant no release/transfer
 authority. See [the pre-run contract](docs/architecture/0015-pre-run-target-holds.md).
+The standalone `CounterpartStatus` phases use seeded PostgreSQL through 0015
+without starting workers. They verify independent recorded state, malformed and
+over-limit denial, historical access, and one-snapshot consistency across a
+concurrent commit. They do not assess live freshness or authorize execution.
+See [the status contract](docs/architecture/0016-recorded-counterpart-status.md).
 The three `FilesystemLeaseChannelNative` phases are focused, model-free real
 database/native lifecycle checks. Each applies the seeded schema through 0014,
 then runs only its selected scenario; predecessor suites remain separate gates.

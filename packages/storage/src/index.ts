@@ -3,6 +3,7 @@ export * from "./context-store.ts";
 export * from "./dispatch-store.ts";
 export * from "./control-store.ts";
 export * from "./counterpart-store.ts";
+export * from "./counterpart-status.ts";
 export * from "./effect-store.ts";
 export * from "./lease-store.ts";
 export * from "./mission-store.ts";

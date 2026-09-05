@@ -15,6 +15,7 @@ import type {
   CounterpartMissionPersistence,
   CounterpartMissionProjection,
   CounterpartMissionSummary,
+  CounterpartMissionStatus,
 } from "@acp/storage";
 
 import { createControlApiServer } from "../src/http-server.ts";
@@ -24,7 +25,18 @@ const pluginVersion = "0.1.0";
 
 class MemoryCounterpartService implements CounterpartMissionPersistence {
   readonly mission = missionFor();
+  readonly evidenceId=createStableId("evidence");
   readonly creations: CounterpartMissionCreate[] = [];
+  statusReads=0;
+  readonly status:CounterpartMissionStatus={ ...this.mission,statusSchemaVersion:"1.0.0",asOf:"2026-09-06T00:00:00.123456+00:00",
+    lifecycle:{ candidate:{ candidateId:createStableId("candidate"),state:"merged",observation:{ recordId:createStableId("event"),observedAt:"2026-09-05T23:00:00.123456+00:00" },
+      revision:{ repositoryId:createStableId("repository"),worktreePath:"C:\\status-test",branch:"feature/ExactCase",headSha:"a".repeat(40),evidenceIds:[this.evidenceId] } },
+      deployments:[{ environment:"production",state:"failed",artifactVersion:{ status:"unknown" },evidenceIds:[],
+        observation:{ recordId:createStableId("event"),observedAt:"2026-09-05T23:00:00.123456+00:00" } }],
+      acceptance:null,tracker:null,effects:[{ effectId:createStableId("effect"),state:"unknown_outcome" }],businessCompletion:null },
+    completion:{ appliedEvaluationId:null,appliedEvaluation:null,latestEvaluation:null },
+    assessment:{ kind:"recorded_only",freshness:"not_assessed",conflicts:"not_assessed" },
+    evidence:[{ evidenceId:this.evidenceId,observedAt:"2026-09-05T22:00:00.123456+00:00",freshness:"stale",accessibility:"available" }] };
 
   async createMission(
     input: CounterpartMissionCreate,
@@ -46,6 +58,9 @@ class MemoryCounterpartService implements CounterpartMissionPersistence {
     const { nodes: _nodes, ...summary } = this.mission;
     return [summary];
   }
+  async getMissionStatus(missionId:StableId<"mission">):Promise<CounterpartMissionStatus|undefined> {
+    this.statusReads++; return missionId===this.mission.missionId ? this.status : undefined;
+  }
 }
 
 describe("authenticated counterpart MCP", () => {
@@ -58,6 +73,7 @@ describe("authenticated counterpart MCP", () => {
       assert.equal(response.status, 401);
       assert.equal(response.headers.get("www-authenticate"), 'Bearer realm="acp-control"');
       assert.doesNotMatch(await response.text(), new RegExp(bearerToken, "u"));
+      assert.equal(persistence.statusReads,0);
     } finally {
       await close(server);
     }
@@ -77,6 +93,7 @@ describe("authenticated counterpart MCP", () => {
       });
       assert.equal(response.status, 403);
       assert.deepEqual(await response.json(), { error: "invalid_origin" });
+      assert.equal(persistence.statusReads,0);
     } finally {
       await close(server);
     }
@@ -97,6 +114,7 @@ describe("authenticated counterpart MCP", () => {
       assert.deepEqual(await response.json(), {
         error: "incompatible_plugin_version",
       });
+      assert.equal(persistence.statusReads,0);
     } finally {
       await close(server);
     }
@@ -121,6 +139,7 @@ describe("authenticated counterpart MCP", () => {
       });
       assert.equal(response.status, 400);
       assert.deepEqual(await response.json(), { error: "https_required" });
+      assert.equal(persistence.statusReads,0);
     } finally {
       await close(server);
     }
@@ -161,6 +180,7 @@ describe("authenticated counterpart MCP", () => {
         persistence.mission.missionId,
       );
       assert.equal(persistence.creations.length, 1);
+      assert.equal("lifecycle" in (created.structuredContent as { mission:object }).mission,false);
 
       const status = await client.callTool({
         name: "get_mission_status",
@@ -171,10 +191,36 @@ describe("authenticated counterpart MCP", () => {
           .mission?.state,
         "executing",
       );
+      assert.deepEqual(status.structuredContent,{ mission:persistence.status });
+      assert.equal(persistence.statusReads,1);
+      const active=await client.callTool({ name:"list_active_missions",arguments:{} });
+      const { nodes:_nodes,...summary }=persistence.mission;
+      assert.deepEqual(active.structuredContent,{ missions:[summary] });
     } finally {
       await client.close();
       await close(server);
     }
+  });
+  it("rejects malformed, oversized or wrong-mission status without exposing rejected metadata",async()=>{
+    const persistence=new MemoryCounterpartService(),server=createControlApiServer({ persistence,bearerToken }),baseUrl=await listen(server);
+    const client=new Client({ name:"acp-status-negative-test",version:"1.0.0" });
+    const transport=new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`),{ requestInit:{ headers:{
+      Authorization:`Bearer ${bearerToken}`,"X-ACP-Plugin-Version":pluginVersion,
+    } } });
+    const sentinel="synthetic-restricted-content-must-not-be-returned";
+    try {
+      await client.connect(transport as unknown as Transport);
+      for(const invalid of [
+        { ...persistence.status,lifecycle:{ ...persistence.status.lifecycle,candidate:{ ...persistence.status.lifecycle.candidate,rawContent:sentinel } } },
+        { ...persistence.status,missionId:createStableId("mission") },
+        { ...persistence.status,requestedScope:"ž".repeat(40000) },
+      ]) {
+        persistence.getMissionStatus=async()=>invalid as CounterpartMissionStatus;
+        const result=await client.callTool({ name:"get_mission_status",arguments:{ missionId:persistence.mission.missionId } });
+        assert.equal(result.isError,true); assert.equal(result.structuredContent,undefined);
+        assert.equal(JSON.stringify(result).includes(sentinel),false);
+      }
+    } finally { await client.close(); await close(server); }
   });
 });
 

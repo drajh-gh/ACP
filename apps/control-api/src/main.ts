@@ -1,11 +1,11 @@
 import { Pool } from "pg";
 import { asConnectionPool, PostgresCounterpartMissionStore } from "@acp/storage";
 
-import { parseControlApiConfig } from "./config.ts";
+import { controlApiDatabaseLimits,parseControlApiConfig } from "./config.ts";
 import { createControlApiServer } from "./http-server.ts";
 
 const config = parseControlApiConfig(process.env);
-const pool = new Pool({ connectionString: config.databaseUrl });
+const pool = new Pool({ ...controlApiDatabaseLimits,connectionString: config.databaseUrl });
 const persistence = new PostgresCounterpartMissionStore(
   asConnectionPool(pool),
   config.runtimeProvenanceId,

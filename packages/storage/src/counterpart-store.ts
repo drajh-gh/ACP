@@ -9,6 +9,9 @@ import type { QueryResultRow } from "pg";
 
 import type { ConnectionPool, QueryExecutor } from "./database.ts";
 import { withTransaction } from "./database.ts";
+import { counterpartMissionStatusSql } from "./counterpart-status-query.ts";
+import { counterpartStatusCollectionLimit,counterpartStatusEnvironmentLimit,counterpartStatusMaximumBytes,
+  parseCounterpartMissionStatus,type CounterpartMissionStatus } from "./counterpart-status.ts";
 
 export interface CounterpartMissionCreate {
   readonly clientRequestId: string;
@@ -53,6 +56,7 @@ export interface CounterpartMissionPersistence {
   getMission(
     missionId: StableId<"mission">,
   ): Promise<CounterpartMissionProjection | undefined>;
+  getMissionStatus(missionId:StableId<"mission">):Promise<CounterpartMissionStatus|undefined>;
   listActiveMissions(
     projectId?: StableId<"project">,
     limit?: number,
@@ -312,6 +316,18 @@ export class PostgresCounterpartMissionStore
       [parsedProject ?? null, limit],
     );
     return result.rows.map(mapSummary);
+  }
+
+  async getMissionStatus(missionId:StableId<"mission">):Promise<CounterpartMissionStatus|undefined> {
+    const parsed=parseStableId(missionId,"mission");
+    const row=(await this.pool.query(counterpartMissionStatusSql,
+      [parsed,counterpartStatusCollectionLimit,counterpartStatusEnvironmentLimit,counterpartStatusMaximumBytes])).rows[0];
+    if(!row) return undefined;
+    if(row.status_error==="too_large") throw new Error("mission status exceeds bounded snapshot; no partial status returned");
+    if(row.status_error!==null) throw new Error("mission status contains invalid or undisclosable references");
+    const status=parseCounterpartMissionStatus(row.snapshot);
+    if(status.missionId!==parsed) throw new Error("mission status identity mismatch");
+    return status;
   }
 }
 

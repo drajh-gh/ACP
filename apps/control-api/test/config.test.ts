@@ -3,9 +3,13 @@ import { describe, it } from "node:test";
 
 import { createStableId } from "@acp/domain";
 
-import { parseControlApiConfig } from "../src/config.ts";
+import { controlApiDatabaseLimits,parseControlApiConfig } from "../src/config.ts";
 
 describe("control API configuration", () => {
+  it("bounds control API pool capacity, connection waits and SQL/lock execution",()=>{
+    assert.deepEqual(controlApiDatabaseLimits,{ max:4,connectionTimeoutMillis:3000,statement_timeout:5000,lock_timeout:2000 });
+    assert.equal(Object.isFrozen(controlApiDatabaseLimits),true);
+  });
   it("defaults to loopback and requires HTTPS forwarding in production", () => {
     const config = parseControlApiConfig({
       ACP_DATABASE_URL: "postgresql://localhost/acp",

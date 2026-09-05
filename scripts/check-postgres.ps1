@@ -12,6 +12,8 @@ param(
   [string]$FilesystemLeaseChannelNative,
   [ValidateSet('core', 'races', 'expiry', 'upgrade', 'regression')]
   [string]$WorktreeReservations,
+  [ValidateSet('core', 'limits', 'snapshot')]
+  [string]$CounterpartStatus,
   [switch]$MigrationSessions,
   [Parameter(DontShow)]
   [switch]$Internal,
@@ -30,6 +32,7 @@ if ($FilesystemLeaseNative -and -not $FilesystemLeases) { throw 'FilesystemLease
 if ($FilesystemLeaseChannelNative -and (-not $FilesystemLeases -or $FilesystemLeaseNative)) { throw 'FilesystemLeaseChannelNative requires FilesystemLeases, without FilesystemLeaseNative' }
 if ($WorktreeReservations -and (-not $FilesystemLeases -or $FilesystemLeaseNative -or $FilesystemLeaseChannelNative)) { throw 'WorktreeReservations requires FilesystemLeases without native modes' }
 if ($MigrationSessions -and ($LifecycleOnly -or $HostOnly -or $LaunchRecovery -or $LaunchNative -or $FilesystemBindings -or $FilesystemNative -or $FilesystemLeases -or $FilesystemLeaseNative -or $FilesystemLeaseChannelNative -or $WorktreeReservations)) { throw 'MigrationSessions is a standalone bounded gate' }
+if ($CounterpartStatus -and ($LifecycleOnly -or $HostOnly -or $LaunchRecovery -or $LaunchNative -or $FilesystemBindings -or $FilesystemNative -or $FilesystemLeases -or $FilesystemLeaseNative -or $FilesystemLeaseChannelNative -or $WorktreeReservations -or $MigrationSessions)) { throw 'CounterpartStatus is a standalone bounded gate' }
 
 . (Join-Path $PSScriptRoot 'native-channel-fixture.ps1')
 
@@ -107,6 +110,7 @@ if (-not $Internal) {
   if ($FilesystemLeaseNative) { $commandLine += ' -FilesystemLeaseNative' }
   if ($FilesystemLeaseChannelNative) { $commandLine += ' -FilesystemLeaseChannelNative ' + $FilesystemLeaseChannelNative }
   if ($WorktreeReservations) { $commandLine += ' -WorktreeReservations ' + $WorktreeReservations }
+  if ($CounterpartStatus) { $commandLine += ' -CounterpartStatus ' + $CounterpartStatus }
   if ($MigrationSessions) { $commandLine += ' -MigrationSessions' }
   $integrationProcess = $null
   $channelRoot = $null
@@ -345,13 +349,19 @@ try {
     Write-Host 'Migration session integration passed; removing only the owned disposable database container.'
     return
   }
-  if ($FilesystemLeaseChannelNative -or $WorktreeReservations) {
+  if ($FilesystemLeaseChannelNative -or $WorktreeReservations -or $CounterpartStatus) {
     # Focused real database/native phases apply the same seeded schema directly.
     # Unrelated predecessor suites cannot consume their bounded child's budget.
     foreach ($migration in @('0006_host_dispatch.sql', '0007_supervised_workers.sql', '0008_worker_recovery.sql',
         '0009_lifecycle_context.sql', '0010_worker_handoff.sql', '0011_worker_launch_intents.sql',
         '0012_worker_launch_recovery.sql', '0013_filesystem_bindings.sql', '0014_filesystem_writer_leases.sql')) {
       Invoke-AcpSqlFile ('packages/storage/migrations/' + $migration) ('Focused prerequisite schema: ' + $migration)
+    }
+    if ($CounterpartStatus) {
+      Invoke-AcpSqlFile 'packages/storage/migrations/0015_worktree_target_holds.sql' 'Status prerequisite: 0015 target holds'
+      Invoke-AcpNodeCheck 'packages/storage/test/integration/counterpart-status.ts' 'Counterpart status integration' $CounterpartStatus -TimeoutSeconds 30
+      Write-Host 'Focused read-only counterpart status phase passed; predecessor suites remain separate gates.'
+      return
     }
     if ($WorktreeReservations) {
       Invoke-AcpSqlFile 'packages/storage/migrations/0015_worktree_target_holds.sql' '0015 pre-run target hold upgrade'

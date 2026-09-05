@@ -10,6 +10,7 @@ import type { QueryResult, QueryResultRow } from "pg";
 
 import type { ConnectionPool, TransactionClient } from "../src/database.ts";
 import { PostgresCounterpartMissionStore } from "../src/counterpart-store.ts";
+import { statusFixture } from "./fixtures/counterpart-status.ts";
 
 type Response =
   | { readonly rows?: readonly QueryResultRow[]; readonly rowCount?: number }
@@ -45,6 +46,29 @@ class ScriptedPool implements ConnectionPool, TransactionClient {
 }
 
 describe("PostgresCounterpartMissionStore", () => {
+  it("reads mission, nodes and independent lifecycle in one bounded statement without transaction or execution authority",async()=>{
+    const snapshot=statusFixture(),pool=new ScriptedPool([{ rows:[{ snapshot,status_error:null }] }]);
+    const store=new PostgresCounterpartMissionStore(pool,createStableId("provenance"));
+    assert.deepEqual(await store.getMissionStatus(snapshot.missionId),snapshot);
+    assert.equal(pool.queries.length,1); assert.match(pool.queries[0]!.text,/^WITH/u);
+    assert.deepEqual(pool.queries[0]!.values,[snapshot.missionId,200,50,65536]);
+    assert.doesNotMatch(pool.queries[0]!.text,/build_context_packet_content|FOR UPDATE|INSERT INTO|UPDATE acp|DELETE FROM/u);
+  });
+  it("validates status identity before querying and returns absent only for an absent mission",async()=>{
+    const pool=new ScriptedPool([{ rows:[] }]),store=new PostgresCounterpartMissionStore(pool,createStableId("provenance"));
+    await assert.rejects(store.getMissionStatus(createStableId("node") as never)); assert.equal(pool.queries.length,0);
+    assert.equal(await store.getMissionStatus(createStableId("mission")),undefined); assert.equal(pool.queries.length,1);
+  });
+  it("denies oversized, cross-project, restricted, malformed and mismatched snapshots without returning partial status",async()=>{
+    const snapshot=statusFixture();
+    for(const row of [{ status_error:"too_large",snapshot:null },{ status_error:"invalid_references",snapshot:null },
+      { status_error:"unexpected",snapshot:null },{ status_error:null,snapshot:{ ...snapshot,statusSchemaVersion:"bad" } },
+      { status_error:null,snapshot:{ ...snapshot,missionId:createStableId("mission") } }]) {
+      const pool=new ScriptedPool([{ rows:[row] }]);
+      await assert.rejects(new PostgresCounterpartMissionStore(pool,createStableId("provenance")).getMissionStatus(snapshot.missionId));
+      assert.equal(pool.queries.length,1);
+    }
+  });
   it("creates a mission from exactly one active binding and records idempotency", async () => {
     const projectId = createStableId("project");
     const provenanceId = createStableId("provenance");

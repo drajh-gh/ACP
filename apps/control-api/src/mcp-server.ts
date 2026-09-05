@@ -1,8 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
-  parseStableId,
+  parseStableId,acceptanceStates,businessCompletionStates,candidateStates,deploymentStates,effectStates,trackerSemanticCategories,
   type StableId,
 } from "@acp/domain";
+import { parseCounterpartMissionStatus } from "@acp/storage";
 import type {
   CounterpartMissionPersistence,
   CounterpartMissionProjection,
@@ -34,6 +35,33 @@ const missionProjectionSchema = missionSummarySchema.extend({
     state: z.string(),
     graphRevision: z.string(),
   })),
+});
+
+const observationSchema=z.object({ recordId:z.string(),observedAt:z.string() });
+const evidenceIdsSchema=z.array(stableId("evd")).max(200);
+const evaluationSchema=z.object({
+  evaluationId:stableId("cev"),missionId:stableId("mis"),contract:z.object({ id:stableId("cct"),version:z.string() }),
+  status:z.enum(["passed","failed"]),evaluatedAt:z.string(),reasons:z.array(z.string()).max(200),disqualifiers:z.array(z.string()).max(200),
+  requiredReceiptsVerified:z.boolean(),evidenceFreshnessVerified:z.boolean(),lifecycleDigest:z.string(),provenanceId:stableId("prv"),
+});
+const missionStatusSchema=missionProjectionSchema.extend({
+  nodes:missionProjectionSchema.shape.nodes.max(200),statusSchemaVersion:z.literal("1.0.0"),asOf:z.string(),
+  lifecycle:z.object({
+    candidate:z.object({ candidateId:stableId("can"),state:z.enum(candidateStates),observation:observationSchema,
+      revision:z.object({ repositoryId:stableId("repo"),worktreePath:z.string(),branch:z.string(),headSha:z.string(),evidenceIds:evidenceIdsSchema }) }).nullable(),
+    deployments:z.array(z.object({ environment:z.string(),state:z.enum(deploymentStates),observation:observationSchema,evidenceIds:evidenceIdsSchema,
+      artifactVersion:z.union([z.object({ status:z.literal("unknown") }),z.object({ status:z.literal("known"),digest:z.string() })]) })).max(50),
+    acceptance:z.object({ state:z.enum(acceptanceStates),candidateRevision:z.string().optional(),evidenceIds:evidenceIdsSchema,observation:observationSchema,
+      waiver:z.object({ authority:z.string(),reason:z.string(),candidateRevision:z.string(),scope:z.string(),waivedAt:z.string(),expiresAt:z.string().optional(),tolerance:z.string().optional() }).optional() }).nullable(),
+    tracker:z.object({ adapterId:z.string(),externalId:z.string(),nativeState:z.string(),semanticCategory:z.enum(trackerSemanticCategories).optional(),
+      sourceVersion:z.string(),observation:observationSchema }).nullable(),
+    effects:z.array(z.object({ effectId:stableId("eff"),state:z.enum(effectStates) })).max(200),
+    businessCompletion:z.object({ state:z.enum(businessCompletionStates),evidenceIds:evidenceIdsSchema,observation:observationSchema }).nullable(),
+  }),
+  completion:z.object({ appliedEvaluationId:stableId("cev").nullable(),appliedEvaluation:evaluationSchema.nullable(),latestEvaluation:evaluationSchema.nullable() }),
+  assessment:z.object({ kind:z.literal("recorded_only"),freshness:z.literal("not_assessed"),conflicts:z.literal("not_assessed") }),
+  evidence:z.array(z.object({ evidenceId:stableId("evd"),observedAt:z.string(),freshness:z.enum(["current","stale","unknown"]),
+    accessibility:z.enum(["available","inaccessible","missing","malformed","unknown"]) })).max(200),
 });
 
 export function createCounterpartMcpServer(
@@ -93,9 +121,9 @@ export function createCounterpartMcpServer(
     {
       title: "Get ACP mission status",
       description:
-        "Read the current durable mission and node projection for an exact ACP mission ID.",
+        "Read one bounded durable snapshot of an exact ACP mission, nodes, independent recorded lifecycle dimensions and historical completion evaluations. Null means unobserved; this read does not assess freshness, resolve conflicts or grant authority.",
       inputSchema: { missionId: stableId("mis") },
-      outputSchema: { mission: missionProjectionSchema },
+      outputSchema: { mission: missionStatusSchema },
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -105,9 +133,11 @@ export function createCounterpartMcpServer(
     },
     async ({ missionId }) => {
       const parsed = parseStableId(missionId, "mission");
-      const mission = await persistence.getMission(parsed);
-      if (mission === undefined) throw new Error("ACP mission does not exist");
-      return missionResult({ mission }, `ACP mission ${mission.missionId} is ${mission.state}.`);
+      const recorded = await persistence.getMissionStatus(parsed);
+      if (recorded === undefined) throw new Error("ACP mission does not exist");
+      const mission=parseCounterpartMissionStatus(recorded);
+      if(mission.missionId!==parsed) throw new Error("ACP mission status identity mismatch");
+      return missionResult({ mission }, `ACP mission ${mission.missionId} is ${mission.state}. Lifecycle and evaluations are recorded observations, not new execution authority.`);
     },
   );
 
