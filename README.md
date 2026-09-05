@@ -49,6 +49,9 @@ deployed autonomous service.
 - storage-only pre-run target holds tied to the exact selected dispatch and
   workspace grant, sharing exclusion with admitted writers; expiry retains
   every key, and no provisioning, release or conversion is enabled
+- immutable storage-only provisioner attempt plans with exact hold revision,
+  base and reported parent/fence intent; expiry or drift retains history and
+  no native creation, retry, cleanup or execution authority is enabled
 - immutable node-context revisions and identity-only, transactionally assembled
   context packets, with current-reference checks, exact retry/deadline admission,
   and cancellation fencing
@@ -108,6 +111,11 @@ pwsh -NoProfile -File scripts/check-postgres.ps1 -MigrationSessions
 pwsh -NoProfile -File scripts/check-postgres.ps1 -CounterpartStatus core
 pwsh -NoProfile -File scripts/check-postgres.ps1 -CounterpartStatus limits
 pwsh -NoProfile -File scripts/check-postgres.ps1 -CounterpartStatus snapshot
+pwsh -NoProfile -File scripts/check-postgres.ps1 -ProvisionerPlans core
+pwsh -NoProfile -File scripts/check-postgres.ps1 -ProvisionerPlans races
+pwsh -NoProfile -File scripts/check-postgres.ps1 -ProvisionerPlans expiry
+pwsh -NoProfile -File scripts/check-postgres.ps1 -ProvisionerPlans upgrade
+pwsh -NoProfile -File scripts/check-postgres.ps1 -ProvisionerPlans regression
 pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery
 pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery -LaunchNative
 pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery -FilesystemBindings
@@ -204,6 +212,11 @@ without starting workers. They verify independent recorded state, malformed and
 over-limit denial, historical access, and one-snapshot consistency across a
 concurrent commit. They do not assess live freshness or authorize execution.
 See [the status contract](docs/architecture/0016-recorded-counterpart-status.md).
+The standalone `ProvisionerPlans` phases apply seeded PostgreSQL through 0016
+and test inert immutable attempt plans, expiry/race denial, history-preserving
+downgrade and predecessor target holds. Directory identities and paths are
+synthetic metadata; no native fence or worktree is created. See
+[the provisioner-plan contract](docs/architecture/0017-inert-provisioner-plans.md).
 The three `FilesystemLeaseChannelNative` phases are focused, model-free real
 database/native lifecycle checks. Each applies the seeded schema through 0014,
 then runs only its selected scenario; predecessor suites remain separate gates.

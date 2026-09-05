@@ -32,6 +32,7 @@ export const idPrefixes = {
   repositoryBinding: "rpb",
   worktreeBinding: "wtb",
   worktreeReservation: "wtr",
+  worktreeProvisionerAttempt: "wpa",
   run: "run",
   runtimeControlEvent: "rce",
   runtimeControlAuthorization: "rca",

@@ -8,3 +8,4 @@ import "./worker-launch-store.test.ts";
 import "./repository-binding.test.ts";
 import "./filesystem-writer.test.ts";
 import "./worktree-reservation.test.ts";
+import "./worktree-provisioner.test.ts";

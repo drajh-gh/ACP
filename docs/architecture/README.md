@@ -26,3 +26,4 @@ explain how its fixed technology choices shape the repository.
 | [0014](0014-linked-worktree-identity-pins.md) | Standalone linked-worktree identity pins |
 | [0015](0015-pre-run-target-holds.md) | Dispatch-bound pre-run target holds |
 | [0016](0016-recorded-counterpart-status.md) | Bounded recorded counterpart mission status |
+| [0017](0017-inert-provisioner-plans.md) | Inert immutable provisioner attempt plans |
