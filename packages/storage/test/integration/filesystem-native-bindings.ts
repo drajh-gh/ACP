@@ -8,6 +8,7 @@ import { createStableId } from "@acp/domain";
 import { PostgresRepositoryBindingStore, PostgresFilesystemWriterStore, type RepositoryBindingInput, type WorktreeBindingInput } from "../../src/index.ts";
 import { observeWindowsRepository, observeWindowsWorktree } from "../../../../apps/worker/src/windows-repository-observer.ts";
 import { WindowsLeasedWorktreeObserver } from "../../../../apps/worker/src/windows-leased-worktree-observer.ts";
+import { FilesystemWriterGuard } from "../../../../apps/worker/src/filesystem-writer-guard.ts";
 import { describeWindowsLaunchFence } from "../../../../apps/worker/src/windows-launch-fence.ts";
 import { launchRecoveryFixture } from "./launch-recovery-fixture.ts";
 
@@ -84,6 +85,44 @@ export async function runNativeFilesystemBindings(pool: Pool, leased = false) {
       assert.equal(abortNative.signal.aborted,true); assert.ok(pids.size>beforePids);
       assert.equal((await writers.load(leaseId))?.releasedAt,null);
       process.stdout.write("PASS leased native preflight: cancellation after real helper spawn awaits closure and retains exclusion\n");
+      let guardRenewals=0;
+      const guard=new FilesystemWriterGuard({ authority:writers.authority,load:(id) => writers.load(id),async heartbeat(id) {
+        guardRenewals++; return writers.heartbeat(id);
+      } },{ renewalIntervalMs:100 });
+      assert.deepEqual(await guard.run(leaseId,signal(),async ({ signal:guardSignal }) => {
+        const observed=await observeWindowsWorktree(repository,workspace,guardSignal,options);
+        assert.equal(observed.state,"confirmed"); if (observed.state!=="confirmed") throw new Error("native guarded read failed");
+        assert.deepEqual(observed.workspace,tree.workspace); assert.deepEqual(observed.gitDirectory,tree.gitDirectory);
+        assert.equal(observed.branchRef,tree.branchRef); assert.equal(observed.headRevision,tree.headRevision);
+        return observed.headRevision;
+      }),{ state:"completed",value:tree.headRevision });
+      assert.ok(guardRenewals>=3,"real helper should span a periodic renewal as well as initial/final ACKs");
+      process.stdout.write("PASS cooperative writer guard: serial database renewals cover actual native read and local validation\n");
+      let lostCalls=0,nativeStarted=false,helperSettled=false,lostDuringNative=false;
+      let nativePid: number | undefined,nativeAliveAtLoss=false,abortedOnSettlement=false,lostObservation: unknown;
+      const losingGuard=new FilesystemWriterGuard({ authority:writers.authority,load:(id) => writers.load(id),async heartbeat(id) {
+        const value=await writers.heartbeat(id);
+        if (++lostCalls>=2 && nativeStarted) {
+          lostDuringNative=!helperSettled;
+          if (nativePid!==undefined) { process.kill(nativePid,0); nativeAliveAtLoss=true; } // Exact owned-helper liveness probe only.
+          throw new Error("synthetic lost COMMIT acknowledgement after real database renewal");
+        }
+        return value;
+      } },{ renewalIntervalMs:20 });
+      assert.deepEqual(await losingGuard.run(leaseId,signal(),async ({ signal:guardSignal }) => {
+        const observed=await observeWindowsWorktree(repository,workspace,guardSignal,{ ...options,onSpawn:(pid,purpose) => {
+          nativePid??=pid; nativeStarted=true; report(pid,purpose);
+        } });
+        helperSettled=true;
+        abortedOnSettlement=guardSignal.aborted; lostObservation=observed;
+        return observed;
+      }),{ state:"unconfirmed" });
+      assert.equal(nativeStarted,true); assert.equal(helperSettled,true); assert.equal(lostDuringNative,true); assert.ok(lostCalls>=2);
+      // Keep negative-case assertions outside the guard: it intentionally turns
+      // callback errors into unconfirmed, which must not swallow a failed test.
+      assert.equal(nativeAliveAtLoss,true); assert.equal(abortedOnSettlement,true); assert.deepEqual(lostObservation,{ state:"unconfirmed" });
+      assert.equal((await writers.load(leaseId))?.releasedAt,null);
+      process.stdout.write("PASS cooperative writer guard: lost database ACK aborts and awaits actual native helper closure without releasing exclusion\nCooperative writer guard native integration: 2 checks passed.\n");
       await git("-C",workspace,"-c","user.name=ACP synthetic test","-c","user.email=acp@example.invalid","commit","--allow-empty","-m","Retained HEAD drift fixture");
       assert.deepEqual(await preflight.observe(leaseId,signal()),{ state:"unconfirmed" });
       assert.deepEqual(await store.loadWorktree(tree.worktreeBindingId),{ binding:tree,retired:false });

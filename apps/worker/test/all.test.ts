@@ -10,3 +10,4 @@ import "./worker-launch-recovery.test.ts";
 import "./windows-launch-fence.test.ts";
 import "./windows-repository-observer.test.ts";
 import "./windows-leased-worktree-observer.test.ts";
+import "./filesystem-writer-guard.test.ts";

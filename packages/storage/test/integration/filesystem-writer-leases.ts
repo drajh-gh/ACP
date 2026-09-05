@@ -5,6 +5,7 @@ import { Pool, type QueryResult, type QueryResultRow } from "pg";
 import { createStableId } from "@acp/domain";
 import { PostgresFilesystemWriterStore, PostgresRepositoryBindingStore, PostgresRuntimeStore, type RepositoryBindingInput, type WorktreeBindingInput } from "../../src/index.ts";
 import { launchRecoveryFixture } from "./launch-recovery-fixture.ts";
+import { FilesystemWriterGuard } from "../../../../apps/worker/src/filesystem-writer-guard.ts";
 
 const port = Number(process.argv[2]);
 if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error("owned database port required");
@@ -245,6 +246,62 @@ try {
     await store.release(terminal.reservation.leaseId);
     assert.equal((await store.listRecovery({ limit: 100 })).items.some((item) => item.lease.leaseId===terminal.reservation.leaseId),false);
   });
+  await check("cooperative guard serially renews real ownership and quiesces before stop/result/release",async () => {
+    const x=await fixture(); await store.reserve(x.reservation);
+    let calls=0,validated!: () => void;
+    const validation=new Promise<void>((done) => { validated=done; });
+    const guard=new FilesystemWriterGuard({ authority:store.authority,load:(id) => store.load(id),async heartbeat(id) {
+      const value=await store.heartbeat(id); if (++calls===3) validated(); return value;
+    } },{ renewalIntervalMs:20 });
+    assert.deepEqual(await guard.run(x.reservation.leaseId,new AbortController().signal,async () => {
+      await validation; return "synthetic local validation";
+    }),{ state:"completed",value:"synthetic local validation" });
+    assert.equal(calls,4); assert.equal((await store.load(x.reservation.leaseId))?.revision,5);
+    assert.equal((await store.load(x.reservation.leaseId))?.releasedAt,null);
+    await x.stop(); assert.equal((await store.load(x.reservation.leaseId))?.state,"recovering");
+    await assert.rejects(store.release(x.reservation.leaseId),/stopped terminal run/u);
+    await x.finishRun(); assert.equal((await store.release(x.reservation.leaseId)).state,"released");
+  });
+  await check("guard loses authority after an actually committed periodic ACK is lost without releasing exclusion",async () => {
+    const x=await fixture(); await store.reserve(x.reservation); const uncertain=intercepted("lost_commit");
+    let calls=0,cleaned=false;
+    const guard=new FilesystemWriterGuard({ authority:store.authority,load:(id) => store.load(id),heartbeat(id) {
+      return ++calls===2 ? uncertain.heartbeat(id) : store.heartbeat(id);
+    } },{ renewalIntervalMs:20 });
+    assert.deepEqual(await guard.run(x.reservation.leaseId,new AbortController().signal,async ({ signal }) => {
+      await new Promise<void>((done) => signal.addEventListener("abort",() => done(),{ once:true }));
+      await Promise.resolve(); cleaned=true; return "late output";
+    }),{ state:"unconfirmed" });
+    assert.equal(cleaned,true); assert.equal(calls,2); assert.equal((await store.load(x.reservation.leaseId))?.revision,3);
+    assert.equal((await store.load(x.reservation.leaseId))?.releasedAt,null);
+    const y=await fixture({ repo:x.repo }); await assert.rejects(store.reserve(y.reservation),/duplicate key/u);
+    await x.stop(); await x.finishRun(); await store.release(x.reservation.leaseId);
+  });
+  await check("durable handoff aborts a running cooperative guard without inventing stop or terminal proof",async () => {
+    const x=await fixture(); await store.reserve(x.reservation);
+    const guard=new FilesystemWriterGuard(store,{ renewalIntervalMs:20 });
+    assert.deepEqual(await guard.run(x.reservation.leaseId,new AbortController().signal,async ({ signal }) => {
+      const aborted=new Promise<void>((done) => signal.addEventListener("abort",() => done(),{ once:true }));
+      await x.handoff(); await aborted; return "late output";
+    }),{ state:"unconfirmed" });
+    assert.equal((await store.load(x.reservation.leaseId))?.state,"recovering");
+    for (const table of ["worker_launch_stops","filesystem_writer_releases"]) {
+      assert.equal((await pool.query(`SELECT 1 FROM acp.${table} WHERE run_id=$1`,[x.start.runId])).rowCount,0);
+    }
+    assert.deepEqual((await pool.query("SELECT state,result FROM acp.worker_runs WHERE run_id=$1",[x.start.runId])).rows[0],{ state:"started",result:null });
+  });
+  await check("a stop receipt inside the scope denies its final ACK rather than widening renewal authority",async () => {
+    const x=await fixture(); await store.reserve(x.reservation);
+    const guard=new FilesystemWriterGuard(store,{ renewalIntervalMs:5000 });
+    assert.deepEqual(await guard.run(x.reservation.leaseId,new AbortController().signal,async () => {
+      await x.stop(); return "premature stop receipt";
+    }),{ state:"unconfirmed" });
+    assert.equal((await store.load(x.reservation.leaseId))?.state,"recovering");
+    await assert.rejects(store.release(x.reservation.leaseId),/stopped terminal run/u);
+    await x.finishRun(); await store.release(x.reservation.leaseId);
+  });
+  // This resets the synthetic PID sequence; keep it last because it intentionally
+  // retains the same host's old journal history and only tests new reservation.
   await check("new mission profiles can use a retained same-project repository without rewriting its observation",async () => {
     const original = await fixture();
     await f.dispatches.closeRuntime(f.runtime.hostIdentifier,f.runtime.sessionId);
