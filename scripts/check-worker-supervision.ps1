@@ -1,21 +1,42 @@
-param([switch]$Internal, [ValidateSet('supervision', 'launch-fence', 'filesystem', 'lease-watchdog', 'lease-liveness', 'lease-bootstrap', 'lease-channel', 'lease-channel-liveness')][string]$Suite = 'supervision', [string]$TestNamePattern)
+param([switch]$Internal, [ValidateSet('supervision', 'launch-fence', 'filesystem', 'filesystem-pins', 'lease-watchdog', 'lease-liveness', 'lease-bootstrap', 'lease-channel', 'lease-channel-liveness')][string]$Suite = 'supervision', [string]$TestNamePattern, [string]$OwnedFixtureRun)
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot 'native-channel-fixture.ps1')
 if (-not $Internal) {
   Add-Type -Path (Join-Path $PSScriptRoot 'WindowsKillOnCloseJob.cs')
   $pwshPath = (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source
   if ($TestNamePattern -match '["\r\n]') { throw 'Invalid test-name pattern' }
   $gateArguments = '"{0}" -NoProfile -File "{1}" -Internal -Suite {2}' -f $pwshPath, $PSCommandPath, $Suite
   if ($TestNamePattern) { $gateArguments += ' -TestNamePattern "' + $TestNamePattern + '"' }
-  $ownedGate = [Acp.Integration.WindowsKillOnCloseJob]::Start($pwshPath, $gateArguments, $repositoryRoot)
+  $ownedGate = $null
+  $fixtureRoot = $null
+  $empty = $false
   try {
+    if ($Suite -eq 'filesystem-pins') {
+      $OwnedFixtureRun = [guid]::NewGuid().ToString('D')
+      $pendingRoot = Get-AcpNativeChannelRoot $OwnedFixtureRun
+      New-Item -ItemType Directory -Path $pendingRoot | Out-Null
+      $fixtureRoot = $pendingRoot
+      $gateArguments += ' -OwnedFixtureRun ' + $OwnedFixtureRun
+      Write-Host "Owned linked pin fixture: $fixtureRoot"
+    }
+    $ownedGate = [Acp.Integration.WindowsKillOnCloseJob]::Start($pwshPath, $gateArguments, $repositoryRoot)
     Write-Output "Owned PID $($ownedGate.ProcessId): Windows $Suite integration (90-second limit)"
     if (-not $ownedGate.WaitForExit(90000)) { throw 'Worker supervision integration timed out' }
     if ($ownedGate.GetExitCode() -ne 0) { throw 'Worker supervision integration failed' }
   } finally {
-    $ownedGate.Terminate(0)
-    if (-not $ownedGate.WaitForExit(5000)) { throw 'Owned supervision gate failed to stop' }
-    $ownedGate.Dispose()
+    try {
+      if ($null -ne $ownedGate) {
+        try { $ownedGate.Terminate(0); $empty = $ownedGate.WaitForEmpty(5000) }
+        finally { $ownedGate.Dispose() }
+        if (-not $empty) { throw 'Owned supervision gate failed to stop' }
+      }
+    } finally {
+      if ($null -ne $fixtureRoot) {
+        if ($null -eq $ownedGate) { Remove-Item -LiteralPath $fixtureRoot }
+        else { Remove-AcpNativeChannelFixture $OwnedFixtureRun $empty }
+      }
+    }
   }
   exit 0
 }
@@ -29,10 +50,12 @@ $testInfo.UseShellExecute = $false
 $testInfo.CreateNoWindow = $true
 $testInfo.RedirectStandardOutput = $true
 $testInfo.RedirectStandardError = $true
-if ($Suite -eq 'filesystem') { $testInfo.Environment['ACP_TEST_GIT'] = (Get-Command git -CommandType Application | Select-Object -First 1).Source }
+if ($Suite -in @('filesystem', 'filesystem-pins')) { $testInfo.Environment['ACP_TEST_GIT'] = (Get-Command git -CommandType Application | Select-Object -First 1).Source }
+if ($Suite -eq 'filesystem-pins') { $testInfo.Environment['ACP_TEST_NATIVE_CHANNEL_ROOT'] = Get-AcpNativeChannelRoot $OwnedFixtureRun }
 $testFile = switch ($Suite) {
   'launch-fence' { 'apps/worker/test/integration/windows-launch-fence.test.ts' }
   'filesystem' { 'apps/worker/test/integration/windows-filesystem.test.ts' }
+  'filesystem-pins' { 'apps/worker/test/integration/windows-linked-worktree-pins.test.ts' }
   'lease-watchdog' { 'apps/worker/test/integration/windows-lease-watchdog.test.ts' }
   'lease-liveness' { 'apps/worker/test/integration/windows-lease-watchdog.test.ts' }
   'lease-bootstrap' { 'apps/worker/test/integration/windows-lease-watchdog.test.ts' }

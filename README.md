@@ -71,6 +71,9 @@ deployed autonomous service.
 - read-only Windows/Git observation for supported checkout and linked-worktree
   layouts, with pinned metadata, exact native identity checks, bounded owned
   Git children and fail-closed unsupported-layout handling
+- standalone native linked-worktree identity pins that retain directory and
+  structural-pointer handles while allowing ordinary Git content updates;
+  not yet launcher-connected and not a restricted-access boundary
 - an authenticated, Origin-checked, trusted-proxy-aware, version-negotiated,
   size-bounded Streamable HTTP MCP control surface for
   idempotent mission creation, exact mission status, and bounded active-mission
@@ -106,6 +109,7 @@ npm run test:dbos-recovery
 npm run test:worker-supervision
 pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite launch-fence
 pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite filesystem
+pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite filesystem-pins
 pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite lease-channel
 pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite lease-channel-liveness
 pwsh -NoProfile -File scripts/check-native-fixture-cleanup.ps1
@@ -171,6 +175,10 @@ The `filesystem` suite uses disposable local Git repositories to test directory
 identity, pointer pinning, layout rejection, unchanged metadata and helper/tree
 cleanup. The observer grants no writer lease and is not an OS network sandbox;
 see [the filesystem binding contract](docs/architecture/0007-host-filesystem-bindings.md).
+The `filesystem-pins` suite checks retained directory/pointer ownership while
+ordinary Git content updates remain possible. It also demonstrates that optional
+routing-file absence is not reserved and verifies eventual cleanup on pin-holder
+death, not writer-stop ordering. See [the standalone pin contract](docs/architecture/0014-linked-worktree-identity-pins.md).
 The two `FilesystemLeaseChannelNative` phases are focused, model-free real
 database/native lifecycle checks. Each applies the seeded schema through 0014,
 then runs only its selected scenario; predecessor suites remain separate gates.
@@ -185,8 +193,9 @@ overall limit and a 45-second limit for the host suite.
 Use `-HostOnly` for a separate host/DBOS/native gate when the combined cycle does
 not fit that budget; pair it with `-LifecycleOnly` for migration rollback coverage.
 
-No commit, push, deployment, or external integration is performed by these
-commands.
+These commands do not commit this project, push, deploy, or connect external
+integrations. Some model-free native tests commit only inside their disposable
+Git fixture repositories.
 
 Migration runners use a disposable physical database session. Closing that
 session releases all session locks and rolls back any uncommitted transaction,

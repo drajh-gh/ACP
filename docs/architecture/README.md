@@ -23,3 +23,4 @@ explain how its fixed technology choices shape the repository.
 | [0011](0011-native-lease-watchdog.md) | Native lease-epoch watchdog |
 | [0012](0012-native-writer-controller.md) | Database-bound native writer controller |
 | [0013](0013-private-native-lease-channel.md) | Private leased launch and persisted target binding |
+| [0014](0014-linked-worktree-identity-pins.md) | Standalone linked-worktree identity pins |
