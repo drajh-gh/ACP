@@ -1,0 +1,13 @@
+import "./ids.test.ts";
+import "./lifecycle.test.ts";
+import "./intake.test.ts";
+import "./claims.test.ts";
+import "./compatibility.test.ts";
+import "./effects.test.ts";
+import "./workflows.test.ts";
+import "./capabilities.test.ts";
+import "./reconciliation.test.ts";
+import "./execution-guards.test.ts";
+import "./runtime-contracts.test.ts";
+import "./node-context.test.ts";
+import "./lifecycle-context.test.ts";

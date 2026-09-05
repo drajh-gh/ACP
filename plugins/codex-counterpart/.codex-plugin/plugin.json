@@ -1,0 +1,23 @@
+{
+  "name": "codex-counterpart",
+  "version": "0.1.0",
+  "description": "Create and inspect durable Agentic Control Plane missions from Codex.",
+  "author": {
+    "name": "ACP"
+  },
+  "repository": "https://github.com/drajh-gh/ACP",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "ACP Counterpart",
+    "shortDescription": "Create and inspect durable ACP missions.",
+    "longDescription": "Turns explicit objectives into durable, policy-governed ACP missions and reports their independent lifecycle projections.",
+    "developerName": "ACP",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Write"],
+    "defaultPrompt": [
+      "Create an ACP mission for this objective.",
+      "Show the current status of this ACP mission."
+    ]
+  },
+  "mcpServers": "./.mcp.json"
+}

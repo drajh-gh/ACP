@@ -1,0 +1,31 @@
+{
+  "name": "agentic-control-plane",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "test": "node --experimental-strip-types --test packages/domain/test/all.test.ts packages/storage/test/all.test.ts apps/worker/test/all.test.ts apps/control-api/test/all.test.ts",
+    "typecheck": "tsc --project tsconfig.json",
+    "check:secrets": "node scripts/check-secrets.mjs",
+    "test:dbos-recovery": "pwsh -NoProfile -File scripts/check-dbos-recovery.ps1",
+    "test:worker-supervision": "pwsh -NoProfile -File scripts/check-worker-supervision.ps1",
+    "check": "npm run typecheck && npm run test && npm run check:secrets",
+    "start:control-api": "node --experimental-strip-types apps/control-api/src/main.ts"
+  },
+  "dependencies": {
+    "@dbos-inc/dbos-sdk": "4.27.6",
+    "pg": "8.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "@types/pg": "8.23.1",
+    "typescript": "7.0.2"
+  }
+}

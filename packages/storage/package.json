@@ -1,0 +1,13 @@
+{
+  "name": "@acp/storage",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@acp/domain": "0.0.0",
+    "pg": "8.23.0"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}

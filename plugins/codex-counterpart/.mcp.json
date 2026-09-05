@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "acp-control": {
+      "url": "https://acp.example.invalid/mcp",
+      "bearer_token_env_var": "ACP_MCP_BEARER_TOKEN",
+      "http_headers": {
+        "X-ACP-Plugin-Version": "0.1.0"
+      },
+      "required": true,
+      "startup_timeout_sec": 20,
+      "tool_timeout_sec": 60,
+      "enabled_tools": [
+        "create_mission",
+        "get_mission_status",
+        "list_active_missions"
+      ]
+    }
+  }
+}

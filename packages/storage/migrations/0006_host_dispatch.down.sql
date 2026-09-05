@@ -1,0 +1,21 @@
+-- Transaction ownership belongs to the migration runner.
+DROP TRIGGER worker_runs_sync_dispatch ON acp.worker_runs;
+DROP FUNCTION acp.sync_worker_dispatch();
+DROP TRIGGER worker_runs_ab_require_dispatch ON acp.worker_runs;
+DROP FUNCTION acp.require_worker_dispatch();
+ALTER TABLE acp.worker_runs DROP COLUMN dispatch_generation;
+DROP FUNCTION acp.worker_host_load(text, text);
+DROP TABLE acp.worker_dispatch_assignments;
+DROP FUNCTION acp.validate_dispatch_assignment();
+DROP TABLE acp.worker_dispatches;
+DROP FUNCTION acp.validate_dispatch();
+DROP TABLE acp.worker_host_runtimes;
+DROP FUNCTION acp.validate_host_runtime();
+DROP TABLE acp.worker_host_sessions;
+DROP FUNCTION acp.validate_host_session();
+DROP TABLE acp.worker_host_session_history;
+DROP FUNCTION acp.host_worker_queue(text, text, text);
+DROP FUNCTION acp.worker_host_capacity(acp.worker_hosts, text);
+DROP TRIGGER mission_events_validate_worker_cancellation ON acp.mission_events;
+DROP FUNCTION acp.validate_worker_cancellation_intent();
+DROP FUNCTION acp.worker_cancellation_requested(acp.stable_id, text);
