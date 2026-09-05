@@ -62,6 +62,9 @@ deployed autonomous service.
 - opt-in persistent native creation/resume seals and atomic durable launch
   intents, revocations, claims and no-journal stop receipts, connected to the
   manager, native transport and bounded recovery sweeps
+- immutable, host-scoped repository/worktree observations with exact native
+  directory identities, cross-role alias fencing and append-only retirement;
+  this registry grants no Git execution or writer-lease authority
 - an authenticated, Origin-checked, trusted-proxy-aware, version-negotiated,
   size-bounded Streamable HTTP MCP control surface for
   idempotent mission creation, exact mission status, and bounded active-mission
@@ -88,6 +91,7 @@ pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly
 pwsh -NoProfile -File scripts/check-postgres.ps1 -HostOnly
 pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery
 pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery -LaunchNative
+pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery -FilesystemBindings
 npm run test:dbos-recovery
 npm run test:worker-supervision
 pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite launch-fence
@@ -128,6 +132,11 @@ sealed receipts and confirms downgrade refusal when no-journal receipt history
 cannot be represented safely by 0011. It removes only its disposable database.
 Add `-LaunchNative` with `-LifecycleOnly -LaunchRecovery` for the bounded Windows
 consumer/receipt/crash proof. It uses synthetic runners, never model credentials.
+Use `-FilesystemBindings` instead of `-LaunchNative` to apply migration 0013,
+exercise empty-registry rollback/re-upgrade, and test immutable observations,
+physical alias races, exact replay, lost acknowledgements, authority loss and
+retirement. The database gate uses fabricated directory identities and does not
+register or alter an actual checkout. Populated registry downgrade is refused.
 `packages/storage/test/integration/host-dispatch.ts`
 uses real PostgreSQL and DBOS queues with synthetic, credential-free transports
 to test reservation races, atomic enqueue rollback, session fencing, dependency

@@ -5,7 +5,7 @@ import { PostgresContextStore, PostgresDispatchStore, PostgresWorkerRuntimeStore
   type WorkerProcessRegistration, type WindowsLaunchFenceDescriptor } from "../../src/index.ts";
 
 /** Synthetic authority/process fixture. Native callers replace the root explicitly. */
-export async function launchRecoveryFixture(pool: Pool, hostIdentifier = "host:launch-recovery-check") {
+export async function launchRecoveryFixture(pool: Pool, hostIdentifier = "host:launch-recovery-check", databaseSchemaVersion = "0012") {
   const contexts = new PostgresContextStore(pool), dispatches = new PostgresDispatchStore(pool), workers = new PostgresWorkerRuntimeStore(pool);
   const legacy = (prefix: string) => `${prefix}_00000000-0000-4000-8000-000000000001`;
   const profile = createStableId("projectProfile"), binding = createStableId("workflowBinding"), template = createStableId("provenance");
@@ -24,7 +24,7 @@ export async function launchRecoveryFixture(pool: Pool, hostIdentifier = "host:l
   await clone("project_profiles", "profile_id", legacy("pro"), { profile_id: profile, profile: { sourceAuthorityRules: { synthetic: "canonical" } } });
   await clone("project_workflow_bindings", "binding_id", legacy("wfb"), { binding_id: binding, profile_id: profile });
   await clone("runtime_provenance", "provenance_id", legacy("prv"), { provenance_id: template, workflow_binding_id: binding,
-    project_profile_id: profile, host_identifier: hostIdentifier, database_schema_version: "0012" });
+    project_profile_id: profile, host_identifier: hostIdentifier, database_schema_version: databaseSchemaVersion });
   await dispatches.registerRuntime(runtime, host);
   async function assignment(fence = syntheticFence, workspace?: string) {
     const missionId = createStableId("mission"), nodeId = createStableId("node"), grantId = createStableId("capabilityGrant");

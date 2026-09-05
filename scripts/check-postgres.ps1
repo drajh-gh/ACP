@@ -4,6 +4,7 @@ param(
   [switch]$HostOnly,
   [switch]$LaunchRecovery,
   [switch]$LaunchNative,
+  [switch]$FilesystemBindings,
   [Parameter(DontShow)]
   [switch]$Internal,
   [Parameter(DontShow)]
@@ -14,6 +15,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 if ($LaunchNative -and (-not $LaunchRecovery -or -not $LifecycleOnly)) { throw 'LaunchNative requires LaunchRecovery and LifecycleOnly to retain the bounded gate budget' }
 if ($HostOnly -and ($LifecycleOnly -or $LaunchRecovery)) { throw 'HostOnly cannot be combined with LifecycleOnly or LaunchRecovery' }
+if ($FilesystemBindings -and (-not $LifecycleOnly -or -not $LaunchRecovery -or $LaunchNative)) { throw 'FilesystemBindings requires LifecycleOnly and LaunchRecovery, without LaunchNative' }
 
 function Invoke-BoundedDocker {
   param(
@@ -83,6 +85,7 @@ if (-not $Internal) {
   if ($LaunchRecovery) { $commandLine += ' -LaunchRecovery' }
   if ($LaunchNative) { $commandLine += ' -LaunchNative' }
   if ($HostOnly) { $commandLine += ' -HostOnly' }
+  if ($FilesystemBindings) { $commandLine += ' -FilesystemBindings' }
   $integrationProcess = $null
 
   try {
@@ -310,6 +313,12 @@ try {
     Invoke-AcpSqlFile 'packages/storage/migrations/0012_worker_launch_recovery.sql' '0012 re-upgrade'
     Invoke-AcpNodeCheck 'packages/storage/test/integration/worker-launch-recovery.ts' 'Worker launch recovery integration' -TimeoutSeconds 60
     if ($LaunchNative) { Invoke-AcpNodeCheck 'packages/storage/test/integration/worker-launch-native.ts' 'Worker native launch integration' -TimeoutSeconds 45 }
+    if ($FilesystemBindings) {
+      Invoke-AcpSqlFile 'packages/storage/migrations/0013_filesystem_bindings.sql' '0013 filesystem binding upgrade'
+      Invoke-AcpSqlFile 'packages/storage/migrations/0013_filesystem_bindings.down.sql' '0013 empty registry downgrade'
+      Invoke-AcpSqlFile 'packages/storage/migrations/0013_filesystem_bindings.sql' '0013 filesystem binding re-upgrade'
+      Invoke-AcpNodeCheck 'packages/storage/test/integration/filesystem-bindings.ts' 'Filesystem binding integration' -TimeoutSeconds 30
+    }
     Write-Host 'Launch recovery checks passed. No-journal receipts intentionally block producer downgrade; removing only the owned disposable database.'
     return
   }

@@ -16,3 +16,4 @@ explain how its fixed technology choices shape the repository.
 | [0004](0004-codex-sdk-workers.md) | Codex SDK workers |
 | [0005](0005-remote-mcp-plugin.md) | Authenticated remote MCP plugin |
 | [0006](0006-deterministic-effect-mediation.md) | Deterministic effect mediation |
+| [0007](0007-host-filesystem-bindings.md) | Immutable host filesystem bindings |

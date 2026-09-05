@@ -12,3 +12,5 @@ export * from "./worker-runtime-store.ts";
 export * from "./worker-recovery-store.ts";
 export * from "./worker-launch-intent.ts";
 export * from "./worker-launch-store.ts";
+export * from "./repository-binding.ts";
+export * from "./repository-binding-store.ts";

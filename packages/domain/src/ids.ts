@@ -29,6 +29,8 @@ export const idPrefixes = {
   reconciliation: "rcn",
   receipt: "rcp",
   repository: "repo",
+  repositoryBinding: "rpb",
+  worktreeBinding: "wtb",
   run: "run",
   runtimeControlEvent: "rce",
   runtimeControlAuthorization: "rca",
