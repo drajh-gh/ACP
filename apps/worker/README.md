@@ -163,9 +163,18 @@ They fence potentially delayed launchers; losing that history can reopen an
 old identity. Storage failure fails closed. This is trusted-host process-lifetime
 coordination, not a security boundary against a hostile same-user administrator.
 Database launch-intent admission now has an opt-in atomic storage boundary in
-migration 0011. Revocation, no-journal stop receipts and consumer recovery remain
-unfinished. Existing consumers do not yet pass this option; a native seal alone
+migration 0011. Migration 0012 adds permanent revocation, fresh recovery claims,
+and durable no-journal stop receipts through `PostgresWorkerLaunchStore`. Owner
+process completion and its sealed receipt are atomic; recovery holds one live
+database session through observation and receipt commit, without row locks over
+native I/O. Lost acquisition acknowledgements destroy the uncertain session.
+Existing consumers do not yet pass this option; a native seal alone
 must not be used to terminalize historical runs.
+
+Migration 0012 cannot be removed while an intent is unresolved, or when a
+no-journal stop receipt is the only independent stop proof for historical work.
+No fake journal is created to make rollback appear safe. Independent mission
+events and permanent native seals are retained when compatible rollback is possible.
 
 ## Verification
 

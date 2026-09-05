@@ -59,8 +59,8 @@ deployed autonomous service.
   exact per-process claims, fresh runtime provenance, and projection repair after
   owner retirement or an explicit single-run handoff; ambiguous or unjournaled
   launches remain pending, and handoff fences late owner writes
-- an opt-in persistent native creation/resume seal for the next launch-intent
-  recovery slice; database intent/revocation wiring is still unfinished
+- opt-in persistent native creation/resume seals and atomic durable launch
+  intents, revocations, claims and no-journal stop receipts; consumer wiring is next
 - an authenticated, Origin-checked, trusted-proxy-aware, version-negotiated,
   size-bounded Streamable HTTP MCP control surface for
   idempotent mission creation, exact mission status, and bounded active-mission
@@ -84,6 +84,7 @@ npm run check:secrets
 npm run check
 pwsh -NoProfile -File scripts/check-postgres.ps1
 pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly
+pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery
 npm run test:dbos-recovery
 npm run test:worker-supervision
 pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite launch-fence
@@ -100,7 +101,7 @@ upgrade seed at `packages/storage/test/integration/postgres-0001-upgrade-seed.sq
 are denied. `scripts/check-postgres.ps1` runs that full cycle plus a two-session
 probe proving that a transaction begun before a concurrent pause waits on the
 authority fence and observes the pause after it commits. Reverse migrations run
-in the opposite order and cover all ten migrations. After the legacy invariant
+in the opposite order and cover the first eleven migrations. After the legacy invariant
 fixture, migration `0005_authoritative_context.sql` is applied as a populated
 upgrade and the real PostgreSQL suite in
 `packages/storage/test/integration/context-store.ts` exercises authoritative
@@ -117,6 +118,11 @@ old-run recovery, exact-version admission, rollback replay, and re-upgrade.
 retiring the host. The PostgreSQL handoff suite checks late-write races, lost
 acknowledgements, manager-to-recovery integration, and unchanged healthy work.
 Downgrade refuses unresolved handoffs and retains their immutable event receipts.
+`0011_worker_launch_intents.sql` atomically binds admitted launch identity.
+The `-LaunchRecovery` gate additionally applies `0012_worker_launch_recovery.sql`,
+tests producer rollback/re-upgrade before new history, then exercises durable
+sealed receipts and confirms downgrade refusal when no-journal receipt history
+cannot be represented safely by 0011. It removes only its disposable database.
 `packages/storage/test/integration/host-dispatch.ts`
 uses real PostgreSQL and DBOS queues with synthetic, credential-free transports
 to test reservation races, atomic enqueue rollback, session fencing, dependency

@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
   [switch]$LifecycleOnly,
+  [switch]$LaunchRecovery,
   [Parameter(DontShow)]
   [switch]$Internal,
   [Parameter(DontShow)]
@@ -75,6 +76,7 @@ if (-not $Internal) {
   $commandLine = '"{0}" -NoProfile -NonInteractive -File "{1}" -Internal -RunId {2}' -f `
     $pwshCommand.Replace('"', '\"'), $scriptPath.Replace('"', '\"'), $outerRunId
   if ($LifecycleOnly) { $commandLine += ' -LifecycleOnly' }
+  if ($LaunchRecovery) { $commandLine += ' -LaunchRecovery' }
   $integrationProcess = $null
 
   try {
@@ -292,6 +294,14 @@ try {
   Invoke-AcpNodeCheck 'packages/storage/test/integration/lifecycle-context.ts' 'Lifecycle context integration' 'after'
   Invoke-AcpNodeCheck 'packages/storage/test/integration/worker-handoff.ts' 'Worker handoff integration'
   Invoke-AcpNodeCheck 'packages/storage/test/integration/worker-launch-intent.ts' 'Worker launch-intent integration'
+  if ($LaunchRecovery) {
+    Invoke-AcpSqlFile 'packages/storage/migrations/0012_worker_launch_recovery.sql' '0012 populated upgrade'
+    Invoke-AcpSqlFile 'packages/storage/migrations/0012_worker_launch_recovery.down.sql' '0012 reversible producer smoke'
+    Invoke-AcpSqlFile 'packages/storage/migrations/0012_worker_launch_recovery.sql' '0012 re-upgrade'
+    Invoke-AcpNodeCheck 'packages/storage/test/integration/worker-launch-recovery.ts' 'Worker launch recovery integration' -TimeoutSeconds 60
+    Write-Host 'Launch recovery checks passed. No-journal receipts intentionally block producer downgrade; removing only the owned disposable database.'
+    return
+  }
 
   $unpauseSql = @'
 BEGIN;
