@@ -23,3 +23,13 @@ it("filesystem writer stores require bounded database access and an explicit run
   assert.deepEqual(new PostgresFilesystemWriterStore(pool,runtime).authority,
     { hostIdentifier: runtime.hostIdentifier,sessionId: runtime.sessionId,applicationVersion: runtime.applicationVersion });
 });
+it("filesystem writer recovery inventory rejects unbounded pages and invalid cursors before querying", async () => {
+  let queries = 0;
+  const pool = { options: { connectionTimeoutMillis: 1000, statement_timeout: 1000, lock_timeout: 1000 },
+    async query() { queries++; return { rows: [] }; } } as unknown as Pool;
+  const store = new PostgresFilesystemWriterStore(pool,{ hostIdentifier: "host:writer",sessionId: createStableId("workerHostSession"),applicationVersion: "test",bindings: [] });
+  for (const limit of [0,-1,101,1.5,NaN,Infinity]) await assert.rejects(store.listRecovery({ limit }),TypeError);
+  await assert.rejects(store.listRecovery({ afterLeaseId: createStableId("run") as never }),TypeError);
+  assert.equal(queries,0);
+  assert.deepEqual(await store.listRecovery(),{ items: [] }); assert.equal(queries,1);
+});

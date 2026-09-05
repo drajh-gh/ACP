@@ -28,6 +28,15 @@ export interface FilesystemWriterLease extends FilesystemWriterReservation {
   readonly releasedAt: string | null;
   readonly state: "active" | "recovering" | "released";
 }
+export interface FilesystemWriterRecoveryItem {
+  readonly lease: FilesystemWriterLease;
+  /** Observation only: even sealed_terminal must pass fresh release authority. */
+  readonly condition: "needs_launch_stop" | "awaiting_run_result" | "sealed_terminal";
+}
+export interface FilesystemWriterRecoveryPage {
+  readonly items: readonly FilesystemWriterRecoveryItem[];
+  readonly nextCursor?: StableId<"lease">;
+}
 
 export function parseFilesystemWriterReservation(value: unknown): FilesystemWriterReservation {
   const keys = ["leaseId", "runId", "workerProcessId", "worktreeBindingId", "provenanceId"];
@@ -74,6 +83,25 @@ export class PostgresFilesystemWriterStore {
     parseStableId(leaseId, "lease");
     const row = (await this.pool.query("SELECT * FROM acp.filesystem_writer_lease_status WHERE lease_id=$1 AND host_identifier=$2", [leaseId,this.authority.hostIdentifier])).rows[0];
     return row ? leaseFromRow(row) : undefined;
+  }
+  /** Bounded, host-scoped keyset inventory. Listing never claims, releases or renews. */
+  async listRecovery(options: { readonly limit?: number; readonly afterLeaseId?: StableId<"lease"> } = {}): Promise<FilesystemWriterRecoveryPage> {
+    const limit = options.limit ?? 20;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new TypeError("filesystem writer recovery page limit must be 1 to 100");
+    if (options.afterLeaseId !== undefined) parseStableId(options.afterLeaseId,"lease");
+    const rows = (await this.pool.query(`SELECT l.*, CASE WHEN s.run_id IS NULL THEN 'needs_launch_stop'
+        WHEN r.state='started' THEN 'awaiting_run_result' ELSE 'sealed_terminal' END AS recovery_condition
+      FROM acp.filesystem_writer_lease_status l JOIN acp.worker_runs r USING(run_id)
+        LEFT JOIN acp.worker_launch_stops s USING(run_id)
+      WHERE l.host_identifier=$1 AND l.state='recovering' AND ($2::text IS NULL OR l.lease_id::text>$2)
+      ORDER BY l.lease_id LIMIT $3`, [this.authority.hostIdentifier,options.afterLeaseId ?? null,limit+1])).rows;
+    const items = rows.slice(0,limit).map((row): FilesystemWriterRecoveryItem => {
+      if (!["needs_launch_stop","awaiting_run_result","sealed_terminal"].includes(row.recovery_condition as string)) {
+        throw new Error("invalid filesystem writer recovery condition");
+      }
+      return { lease: leaseFromRow(row),condition: row.recovery_condition as FilesystemWriterRecoveryItem["condition"] };
+    });
+    return { items,...(rows.length > limit ? { nextCursor: items[items.length-1]!.lease.leaseId } : {}) };
   }
   /** A failed or uncertain renewal must be treated as lost authority by future OS consumers. */
   async heartbeat(leaseId: StableId<"lease">): Promise<FilesystemWriterLease> {

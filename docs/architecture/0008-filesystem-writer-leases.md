@@ -44,6 +44,14 @@ Fresh release provenance is derived from the current template and original
 packet. Both owner and release authority are rechecked at commit. Recovery that
 cannot produce sealed native stop evidence leaves exclusion retained indefinitely.
 
+Recovery inventory uses host-scoped keyset pages of at most 100 items. It only
+reports retained leases whose snapshot is recovering, distinguishing missing
+launch-stop evidence, a stopped launch awaiting its run result, and sealed
+terminal ownership. Listing has no write effects and no entry grants authority;
+release always revalidates current state and provenance. Each page is its own
+database observation, not a repeatable-read scan. Callers continue with the cursor
+then restart a fresh pass so newly changed or inserted earlier keys are revisited.
+
 Store mutations lock mission → node → run → host session → host → launch intent,
 then repository → worktree → lease. Unique indexes serialize competing keys.
 Direct SQL updates can acquire the lease row before triggers take those locks;

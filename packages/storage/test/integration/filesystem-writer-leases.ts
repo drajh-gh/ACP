@@ -215,6 +215,36 @@ try {
     assert.equal(await otherHost.load(x.reservation.leaseId),undefined);
     await assert.rejects(otherHost.release(x.reservation.leaseId),/not found on this host/u);
   });
+  await check("bounded keyset recovery inventory is host-scoped, complete, duplicate-free and read-only",async () => {
+    const terminal = await fixture(), awaiting = await fixture(), unsealed = await fixture(), healthy = await fixture();
+    for (const x of [terminal,awaiting,unsealed,healthy]) await store.reserve(x.reservation);
+    await terminal.stop(); await terminal.finishRun(); await awaiting.stop(); await unsealed.handoff();
+    const before = (await pool.query("SELECT count(*)::int AS count,sum(revision)::int AS revision FROM acp.filesystem_writer_leases")).rows[0];
+    const found = new Map<string,string>(); let afterLeaseId: typeof terminal.reservation.leaseId | undefined;
+    for (let pageNumber=0; pageNumber<50; pageNumber++) {
+      const page = await store.listRecovery({ limit: 1,...(afterLeaseId === undefined ? {} : { afterLeaseId }) });
+      assert.ok(page.items.length<=1);
+      for (const item of page.items) {
+        assert.equal(item.lease.hostIdentifier,f.runtime.hostIdentifier); assert.equal(item.lease.state,"recovering");
+        assert.equal(found.has(item.lease.leaseId),false); found.set(item.lease.leaseId,item.condition);
+      }
+      if (page.nextCursor === undefined) break;
+      if (afterLeaseId !== undefined) assert.ok(page.nextCursor>afterLeaseId);
+      afterLeaseId = page.nextCursor;
+      assert.ok(pageNumber<49,"bounded fixture inventory must finish");
+    }
+    assert.equal(found.get(terminal.reservation.leaseId),"sealed_terminal");
+    assert.equal(found.get(awaiting.reservation.leaseId),"awaiting_run_result");
+    assert.equal(found.get(unsealed.reservation.leaseId),"needs_launch_stop");
+    assert.equal(found.has(healthy.reservation.leaseId),false);
+    const expected = (await pool.query("SELECT lease_id FROM acp.filesystem_writer_lease_status WHERE host_identifier=$1 AND state='recovering' ORDER BY lease_id",[f.runtime.hostIdentifier])).rows;
+    assert.deepEqual([...found.keys()],expected.map((r) => r.lease_id));
+    assert.deepEqual((await pool.query("SELECT count(*)::int AS count,sum(revision)::int AS revision FROM acp.filesystem_writer_leases")).rows[0],before);
+    const otherHost = new PostgresFilesystemWriterStore(pool,{ ...f.runtime,hostIdentifier: "host:other-writer" });
+    assert.deepEqual(await otherHost.listRecovery(),{ items: [] });
+    await store.release(terminal.reservation.leaseId);
+    assert.equal((await store.listRecovery({ limit: 100 })).items.some((item) => item.lease.leaseId===terminal.reservation.leaseId),false);
+  });
   await check("new mission profiles can use a retained same-project repository without rewriting its observation",async () => {
     const original = await fixture();
     await f.dispatches.closeRuntime(f.runtime.hostIdentifier,f.runtime.sessionId);
