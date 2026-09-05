@@ -10,6 +10,8 @@ import type { WindowsSupervisionScope } from "@acp/storage";
 import type { WindowsLaunchFenceDescriptor } from "./windows-launch-fence.ts";
 
 export interface OwnedWorkerExit {
+  /** Present only after an intent-mode bridge durably sealed its exact root. */
+  readonly launchSealed?: true;
   readonly treeEmpty: true;
   readonly exitCode: number;
   readonly terminated: boolean;
@@ -117,13 +119,18 @@ export class WindowsWorkerLauncher implements WorkerLauncher {
             if (outputBytes > request.maximumOutputBytes) throw new Error("oversized worker output");
             chunks.push(bytes);
           } else if (frame.type === "closed" && receivedReady && !evidence && frame.treeEmpty === true
+              && (request.launchFence === undefined || frame.launchSealed === true)
               && Number.isSafeInteger(frame.exitCode) && typeof frame.terminated === "boolean") {
-            evidence = { treeEmpty: true, exitCode: frame.exitCode as number, terminated: frame.terminated, failed: protocolFailed };
+            evidence = { treeEmpty: true, exitCode: frame.exitCode as number, terminated: frame.terminated, failed: protocolFailed,
+              ...(request.launchFence === undefined ? {} : { launchSealed: true }) };
           } else if (frame.type === "failure" && !evidence) {
             failureDiagnostic = { stage: frame.stage, code: frame.errorCode, line: frame.scriptLine };
-            if (frame.treeEmpty === true) evidence = { treeEmpty: true, exitCode: 137, terminated: true, failed: true };
+            if (frame.treeEmpty === true && (request.launchFence === undefined || frame.launchSealed === true)) {
+              evidence = { treeEmpty: true, exitCode: 137, terminated: true, failed: true,
+                ...(request.launchFence === undefined ? {} : { launchSealed: true }) };
+            }
             if (!receivedReady) {
-              const error = frame.treeEmpty === true ? new Error("native worker launch failed") : new WorkerTerminationUnconfirmedError();
+              const error = evidence ? new Error("native worker launch failed") : new WorkerTerminationUnconfirmedError();
               error.cause = failureDiagnostic;
               ready.reject(error);
             }

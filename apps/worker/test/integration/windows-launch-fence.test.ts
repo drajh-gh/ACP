@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { it } from "node:test";
-import { mkdtemp, rm, readdir, readFile, writeFile, appendFile, mkdir, rename, link, symlink } from "node:fs/promises";
+import { mkdtemp, rm, readdir, readFile, writeFile, appendFile, mkdir, rename, link, symlink, open } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve, relative, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,6 +10,7 @@ import { createStableId } from "@acp/domain";
 import { WindowsWorkerLauncher, type OwnedWorker } from "../../src/windows-worker-launcher.ts";
 import { describeWindowsLaunchFence, sealWindowsWorkerLaunch, type WindowsLaunchFenceDescriptor } from "../../src/windows-launch-fence.ts";
 import { minimalCodexEnvironment } from "../../src/codex-sdk-transport.ts";
+import { WorkerTerminationUnconfirmedError } from "../../src/worker-manager.ts";
 
 const native = process.platform === "win32";
 const runnerPath = fileURLToPath(new URL("./synthetic-owned-runner.ts", import.meta.url));
@@ -86,6 +87,8 @@ it("a consumed identity cannot create a second root after normal exit", { skip: 
   try {
     worker = await launcher.launch(launch); worker.release(JSON.stringify({ text: "fenced output" }));
     const result = await worker.closed; assert.equal(result.failed, false); assert.equal(JSON.parse(result.output).text, "fenced output");
+    assert.equal(result.launchSealed, true);
+    assert.match(await readFile(join(f.directory, launch.workerProcessId + ".launch"), "utf8"), /\nsealed\n$/u);
     await assert.rejects(launcher.launch(launch));
     const sealed = await sealWindowsWorkerLaunch(f.fence, launch.workerProcessId, signal(), options);
     assert.equal(sealed.state, "lost");
@@ -100,9 +103,39 @@ it("a permanent seal fences late GO even before recovery stops the suspended roo
     const holder = await probe("seal-only", launch); await holder.closed; await holder.dispose();
     worker.release(JSON.stringify({ text: "must never execute" }));
     const result = await worker.closed; assert.equal(result.failed, true); assert.equal(result.output, "");
+    assert.equal(result.launchSealed, true);
     await gone(worker.processId);
     assert.equal((await sealWindowsWorkerLaunch(f.fence, launch.workerProcessId, signal(), options)).state, "lost");
   } finally { await cleanup(worker); await f.dispose(); }
+});
+
+it("explicit termination durably seals the exact unreleased root before reporting closure", { skip: !native, timeout: 25000 }, async () => {
+  const f = await fixture(), launch = request(f.fence); let worker: OwnedWorker | undefined;
+  try {
+    worker = await launcher.launch(launch);
+    const result = await worker.terminate();
+    assert.equal(result.launchSealed, true); assert.equal(result.terminated, true); assert.equal(result.output, "");
+    await gone(worker.processId);
+    assert.match(await readFile(join(f.directory, launch.workerProcessId + ".launch"), "utf8"), /\nsealed\n$/u);
+    await assert.rejects(launcher.launch(launch));
+  } finally { await cleanup(worker); await f.dispose(); }
+});
+
+it("tree closure without a writable durable seal remains unconfirmed until independent recovery", { skip: !native, timeout: 25000 }, async () => {
+  const f = await fixture(), launch = request(f.fence); let worker: OwnedWorker | undefined, held: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    worker = await launcher.launch(launch);
+    held = await open(join(f.directory, launch.workerProcessId + ".launch"), "r");
+    // Native Open requests no sharing. Keep the existing seal file occupied
+    // through confirmed tree stop, without changing its bytes or identity.
+    await assert.rejects(worker.terminate(), WorkerTerminationUnconfirmedError);
+    await gone(worker.processId);
+    await held.close(); held = undefined;
+    const recovered = await sealWindowsWorkerLaunch(f.fence, launch.workerProcessId, signal(), options);
+    assert.equal(recovered.state, "lost"); assert.equal(recovered.sealed, true);
+    assert.equal(recovered.root?.processId, worker.processId);
+    await assert.rejects(launcher.launch(launch));
+  } finally { await held?.close(); await cleanup(worker); await f.dispose(); }
 });
 
 it("a crash after durable consumption but before CreateProcess remains sealed against replay", { skip: !native, timeout: 25000 }, async () => {

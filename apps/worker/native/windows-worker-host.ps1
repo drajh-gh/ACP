@@ -3,8 +3,20 @@ $ProgressPreference = 'SilentlyContinue'
 [Console]::InputEncoding = [Text.UTF8Encoding]::new($false)
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 function Send-AcpFrame($value) { [Console]::Out.WriteLine(($value | ConvertTo-Json -Compress -Depth 8)); [Console]::Out.Flush() }
+function Seal-AcpOwnedLaunch($descriptor, $workerProcessId, $scope, $boot, $job) {
+  $fence = [Acp.Worker.WindowsLaunchFence]::Open($descriptor.directory, $descriptor.directoryIdentity, $workerProcessId,
+    $scope.machineFingerprint, $boot, $scope.sessionId, 1000)
+  try {
+    if ($fence.ProcessId -ne $job.ProcessId -or $fence.ProcessStartToken -cne $job.ProcessStartToken) {
+      throw 'Launch seal does not match the stopped root'
+    }
+    $fence.Seal()
+    return $true
+  } finally { $fence.Dispose() }
+}
 $workerJob = $null
 $launchFence = $null
+$launchSealed = $false
 $controlReader = [IO.StreamReader]::new([Console]::OpenStandardInput(), [Text.UTF8Encoding]::new($false))
 $phase = 'read-launch'
 try {
@@ -110,6 +122,12 @@ try {
     }
     [Threading.Thread]::Sleep(10)
   }
+  # Closure and permanent launch revocation are distinct evidence. Seal before
+  # reporting either to an intent-mode owner, including an already-sealed retry.
+  if ($launch.ContainsKey('launchFence')) {
+    $phase = 'seal-stopped-launch'
+    $launchSealed = Seal-AcpOwnedLaunch $expected $launch.workerProcessId $scope $expectedBoot $workerJob
+  }
   # All writers are now dead. Drain remaining buffered stdout under the same cap.
   $phase = 'drain-output'
   while ($true) {
@@ -120,13 +138,20 @@ try {
     Send-AcpFrame @{ type = 'output'; data = [Convert]::ToBase64String($outBuffer, 0, $count) }
     $output = $workerJob.Output.ReadAsync($outBuffer, 0, $outBuffer.Length)
   }
-  Send-AcpFrame @{ type = 'closed'; treeEmpty = $true; exitCode = $rootExitCode; terminated = $stopRequested }
+  Send-AcpFrame @{ type = 'closed'; treeEmpty = $true; launchSealed = $launchSealed; exitCode = $rootExitCode; terminated = $stopRequested }
 } catch {
   # Errors are intentionally generic; exception contents may contain payloads.
+  $failure = $_
   $empty = $false
   if ($null -ne $workerJob) { try { $empty = $workerJob.TerminateAndWait(5000) } catch {} }
-  Send-AcpFrame @{ type = 'failure'; treeEmpty = $empty; stage = $phase;
-    errorCode = $_.Exception.HResult; scriptLine = $_.InvocationInfo.ScriptLineNumber }
+  if ($empty -and $launch.ContainsKey('launchFence') -and -not $launchSealed) {
+    try {
+      if ($null -ne $launchFence) { $launchFence.Dispose(); $launchFence = $null }
+      $launchSealed = Seal-AcpOwnedLaunch $expected $launch.workerProcessId $scope $expectedBoot $workerJob
+    } catch { } # A busy/malformed/replaced seal is not durable launch closure.
+  }
+  Send-AcpFrame @{ type = 'failure'; treeEmpty = $empty; launchSealed = $launchSealed; stage = $phase;
+    errorCode = $failure.Exception.HResult; scriptLine = $failure.InvocationInfo.ScriptLineNumber }
   exit 1
 } finally {
   if ($null -ne $launchFence) { $launchFence.Dispose() }

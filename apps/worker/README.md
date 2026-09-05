@@ -151,6 +151,13 @@ An occupied file, malformed/partial record, directory identity change, wrong
 scope, reparse point or hard link stays unconfirmed. Handles anchor the root and
 every ancestor against namespace replacement while acting.
 
+After normal exit, explicit termination, or a recoverable bridge failure, the
+owner first confirms tree stop and then durably seals that exact root. Fenced
+`OwnedWorkerExit` includes `launchSealed: true` only after both facts are known.
+A stopped tree with an occupied/unwritable seal remains unconfirmed to its owner;
+independent recovery can seal and observe it later. Legacy launches retain their
+existing closure contract and do not receive fabricated seal evidence.
+
 Never truncate, delete, relocate or restore seal files as ordinary cleanup.
 They fence potentially delayed launchers; losing that history can reopen an
 old identity. Storage failure fails closed. This is trusted-host process-lifetime
