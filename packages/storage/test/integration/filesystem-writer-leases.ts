@@ -63,15 +63,25 @@ try {
     assert.equal(left.branchKey,`branch:${x.repo.repositoryId}:${createHash("sha256").update(x.tree.branchRef).digest("hex")}`);
     assert.ok(left.physicalWorkspaceKey.includes(x.tree.workspace.identity));
     assert.ok(Date.parse(left.expiresAt)-Date.parse(left.heartbeatAt)<=20000);
+    assert.deepEqual(await store.loadLaunchBinding(left.leaseId),{ lease:left,intent:x.start.launchIntent,
+      workspace:x.tree.workspace.path,deadlineAt:x.started.timeoutAt });
+    assert.deepEqual(await store.load(left.leaseId),left); // Metadata reads never renew.
+    for (const owner of [{ ...f.runtime,hostIdentifier:"host:other-writer" },
+      { ...f.runtime,sessionId:createStableId("workerHostSession") },{ ...f.runtime,applicationVersion:"other" }]) {
+      assert.equal(await new PostgresFilesystemWriterStore(pool,owner).loadLaunchBinding(left.leaseId),undefined);
+    }
+    assert.equal(await store.loadLaunchBinding(createStableId("lease")),undefined);
     const renewed = await store.heartbeat(left.leaseId); assert.equal(renewed.revision,2);
     assert.equal(renewed.acquiredAt,left.acquiredAt); assert.ok(Date.parse(renewed.expiresAt)>=Date.parse(left.expiresAt));
     await assert.rejects(store.reserve({ ...x.reservation,leaseId: createStableId("lease") }),/aliases different/u);
     await assert.rejects(store.reserve({ ...x.reservation,workerProcessId: createStableId("workerProcess") }),/aliases different/u);
     await assert.rejects(store.release(left.leaseId),/stopped terminal run/u);
     await x.stop(); assert.equal((await store.load(left.leaseId))?.state,"recovering");
+    assert.equal(await store.loadLaunchBinding(left.leaseId),undefined);
     await assert.rejects(store.release(left.leaseId),/stopped terminal run/u); // Result-validation gap remains excluded.
     await x.finishRun(); assert.equal((await store.release(left.leaseId)).state,"released");
     assert.equal((await store.reserve(x.reservation)).state,"released");
+    assert.equal(await store.loadLaunchBinding(left.leaseId),undefined);
     await assert.rejects(store.heartbeat(left.leaseId),/unreleased owner/u);
     const events = (await pool.query("SELECT event_type FROM acp.mission_events WHERE mission_id=$1 AND event_type LIKE 'filesystem.writer-%' ORDER BY occurred_at",[x.a.missionId])).rows;
     assert.deepEqual(events.map((e) => e.event_type),["filesystem.writer-acquired","filesystem.writer-renewed","filesystem.writer-released"]);
@@ -108,6 +118,7 @@ try {
     const y = await fixture({ repo: x.repo });
     await new Promise((done) => setTimeout(done,Math.max(1,Date.parse(lease.expiresAt)-Date.now()+30)));
     assert.equal((await store.load(lease.leaseId))?.state,"recovering");
+    assert.equal(await store.loadLaunchBinding(lease.leaseId),undefined);
     assert.equal((await store.reserve(x.reservation)).revision,1);
     await assert.rejects(store.heartbeat(lease.leaseId),/expired filesystem writer/u);
     await assert.rejects(store.reserve(y.reservation),/duplicate key/u);
@@ -117,6 +128,7 @@ try {
     const x = await fixture(); await store.reserve(x.reservation);
     await registry.retireWorktree(x.tree.worktreeBindingId,await provenance(),"No further writer admission.");
     assert.equal((await store.load(x.reservation.leaseId))?.state,"recovering");
+    assert.equal(await store.loadLaunchBinding(x.reservation.leaseId),undefined);
     await assert.rejects(store.heartbeat(x.reservation.leaseId),/exact live delivery/u);
     const y = await fixture({ repo: x.repo }); await assert.rejects(store.reserve(y.reservation),/duplicate key/u);
     await x.stop(); await x.finishRun(); assert.equal((await store.release(x.reservation.leaseId)).state,"released");
@@ -285,6 +297,7 @@ try {
       await x.handoff(); await aborted; return "late output";
     }),{ state:"unconfirmed" });
     assert.equal((await store.load(x.reservation.leaseId))?.state,"recovering");
+    assert.equal(await store.loadLaunchBinding(x.reservation.leaseId),undefined);
     for (const table of ["worker_launch_stops","filesystem_writer_releases"]) {
       assert.equal((await pool.query(`SELECT 1 FROM acp.${table} WHERE run_id=$1`,[x.start.runId])).rowCount,0);
     }

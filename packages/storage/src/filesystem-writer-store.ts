@@ -3,6 +3,7 @@ import type { Pool, QueryResultRow } from "pg";
 import { withTransaction, type QueryExecutor } from "./database.ts";
 import { PostgresDispatchStore, type HostRuntimeRegistration } from "./dispatch-store.ts";
 import type { WorkerRecoveryAuthority } from "./worker-recovery-store.ts";
+import { parseWorkerLaunchIntent, type WorkerLaunchIntent } from "./worker-launch-intent.ts";
 
 export interface FilesystemWriterReservation {
   readonly leaseId: StableId<"lease">;
@@ -36,6 +37,13 @@ export interface FilesystemWriterRecoveryItem {
 export interface FilesystemWriterRecoveryPage {
   readonly items: readonly FilesystemWriterRecoveryItem[];
   readonly nextCursor?: StableId<"lease">;
+}
+/** Immutable launch metadata, NOT an authority renewal or native filesystem pin. */
+export interface FilesystemWriterLaunchBinding {
+  readonly lease: FilesystemWriterLease;
+  readonly intent: WorkerLaunchIntent;
+  readonly workspace: string;
+  readonly deadlineAt: string;
 }
 
 export function parseFilesystemWriterReservation(value: unknown): FilesystemWriterReservation {
@@ -83,6 +91,27 @@ export class PostgresFilesystemWriterStore {
     parseStableId(leaseId, "lease");
     const row = (await this.pool.query("SELECT * FROM acp.filesystem_writer_lease_status WHERE lease_id=$1 AND host_identifier=$2", [leaseId,this.authority.hostIdentifier])).rows[0];
     return row ? leaseFromRow(row) : undefined;
+  }
+  /** Original-owner scoped prelaunch read. The first fresh heartbeat is still
+   * required AFTER native challenge issuance; this read never grants GO.
+   */
+  async loadLaunchBinding(leaseId: StableId<"lease">): Promise<FilesystemWriterLaunchBinding | undefined> {
+    parseStableId(leaseId,"lease"); const a=this.authority;
+    const row=(await this.pool.query(`SELECT l.*,i.directory_path,i.directory_identity,i.supervision_scope,
+        i.worker_process_id AS intent_process_id,i.deadline_at AS launch_deadline,w.workspace_path
+      FROM acp.filesystem_writer_lease_status l
+        JOIN acp.worker_launch_intents i ON i.run_id=l.run_id AND i.worker_process_id=l.worker_process_id
+        JOIN acp.worker_runs r ON r.run_id=l.run_id AND r.launch_worker_process_id=i.worker_process_id
+        JOIN acp.worktree_bindings w ON w.worktree_binding_id=l.worktree_binding_id
+      WHERE l.lease_id=$1 AND l.host_identifier=$2 AND l.owner_session_id=$3 AND l.application_version=$4
+        AND i.host_identifier=l.host_identifier AND i.owner_session_id=l.owner_session_id AND i.application_version=l.application_version
+        AND l.state='active' AND l.released_at IS NULL AND r.state='started'
+        AND r.workspace=w.workspace_path AND i.deadline_at=r.timeout_at AND i.deadline_at>clock_timestamp()`,
+      [leaseId,a.hostIdentifier,a.sessionId,a.applicationVersion])).rows[0];
+    if (!row) return undefined;
+    return { lease:leaseFromRow(row),intent:parseWorkerLaunchIntent({ workerProcessId:row.intent_process_id,
+      fence:{ directory:row.directory_path,directoryIdentity:row.directory_identity,scope:row.supervision_scope } }),
+      workspace:row.workspace_path as string,deadlineAt:(row.launch_deadline as Date).toISOString() };
   }
   /** Bounded, host-scoped keyset inventory. Listing never claims, releases or renews. */
   async listRecovery(options: { readonly limit?: number; readonly afterLeaseId?: StableId<"lease"> } = {}): Promise<FilesystemWriterRecoveryPage> {

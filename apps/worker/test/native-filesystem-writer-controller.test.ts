@@ -36,6 +36,79 @@ function fixture() {
     get lease() { return lease; }, set lease(value) { lease=value; },get counts() { return { releases,stops }; } };
 }
 
+function launchBindingFixture() {
+  const f=fixture();
+  const fence={ directory:"C:\\ACP-test\\seals",directoryIdentity:"win32-dir:12345678:0000000000000001",
+    scope:{ machineFingerprint:"a".repeat(64),bootedAt:"2000-01-01T00:00:00.000Z",sessionId:1 } };
+  const request={ ...f.session.leaseIdentity,fence,workspace:"C:\\ACP-test\\worktree",deadlineAt:new Date(Date.now()+30000).toISOString() };
+  let reads=0;
+  const binding={ lease:{ ...f.lease },intent:{ workerProcessId:f.lease.workerProcessId,fence:structuredClone(fence) },
+    workspace:request.workspace,deadlineAt:request.deadlineAt };
+  const writers={ ...f.writers,async loadLaunchBinding() { reads++; return structuredClone(binding); } };
+  return { ...f,request,binding,writers,controller:new NativeFilesystemWriterController(writers),get reads() { return reads; } };
+}
+
+it("native launch preflight matches persisted metadata without renewing authority",async () => {
+  const f=launchBindingFixture();
+  await f.controller.assertLaunchBinding(f.request,f.caller.signal);
+  assert.equal(f.reads,1); assert.deepEqual(f.trace,["native-challenge:1"]);
+});
+
+it("native launch preflight rejects every changed persisted launch target",async () => {
+  for (const change of ["lease","run","process","intent-process","workspace","deadline","directory","directory-id","machine","boot","session"]) {
+    const f=launchBindingFixture(),b=f.binding;
+    if (change==="lease") b.lease.leaseId=createStableId("lease");
+    if (change==="run") b.lease.runId=createStableId("run");
+    if (change==="process") b.lease.workerProcessId=createStableId("workerProcess");
+    if (change==="intent-process") b.intent.workerProcessId=createStableId("workerProcess");
+    if (change==="workspace") b.workspace+="-other";
+    if (change==="deadline") b.deadlineAt=new Date(Date.parse(b.deadlineAt)+1).toISOString();
+    if (change==="directory") b.intent.fence.directory+="-other";
+    if (change==="directory-id") b.intent.fence.directoryIdentity="win32-dir:12345678:0000000000000002";
+    if (change==="machine") b.intent.fence.scope.machineFingerprint="b".repeat(64);
+    if (change==="boot") b.intent.fence.scope.bootedAt="2000-01-01T00:00:01.000Z";
+    if (change==="session") b.intent.fence.scope.sessionId++;
+    await assert.rejects(f.controller.assertLaunchBinding(f.request,f.caller.signal),/launch binding/u,change);
+    assert.deepEqual(f.trace,["native-challenge:1"]);
+  }
+});
+
+it("native launch preflight rejects inactive and foreign original owners",async () => {
+  for (const change of [{ state:"recovering" as const },{ releasedAt:"2000-01-01T00:00:01.000Z" },
+    { hostIdentifier:"other" },{ ownerSessionId:createStableId("workerHostSession") },{ applicationVersion:"other" }]) {
+    const f=launchBindingFixture(); Object.assign(f.binding.lease,change);
+    await assert.rejects(f.controller.assertLaunchBinding(f.request,f.caller.signal),/launch binding/u);
+  }
+});
+
+it("native launch preflight requires an available persisted read and propagates failure",async () => {
+  const f=fixture(),b=launchBindingFixture();
+  await assert.rejects(f.controller().assertLaunchBinding(b.request,f.caller.signal),/launch binding/u);
+  b.writers.loadLaunchBinding=async () => undefined as never;
+  await assert.rejects(b.controller.assertLaunchBinding(b.request,b.caller.signal),/launch binding/u);
+  b.writers.loadLaunchBinding=async () => { throw new Error("database unavailable"); };
+  await assert.rejects(b.controller.assertLaunchBinding(b.request,b.caller.signal),/database unavailable/u);
+});
+
+it("native launch preflight snapshots caller fields and original owner across a held read",async () => {
+  const f=launchBindingFixture(),pending=deferred<void>(),read=f.writers.loadLaunchBinding;
+  f.writers.loadLaunchBinding=async () => { await pending.promise; return read(); };
+  const checking=f.controller.assertLaunchBinding(f.request,f.caller.signal);
+  f.request.workspace+="-mutated"; f.request.fence.scope.sessionId++;
+  f.writers.authority.applicationVersion="mutated";
+  pending.resolve(); await checking;
+  assert.equal(f.reads,1);
+});
+
+it("native launch preflight checks cancellation on both sides of its bounded metadata read",async () => {
+  const f=launchBindingFixture(); f.caller.abort();
+  await assert.rejects(f.controller.assertLaunchBinding(f.request,f.caller.signal),/cancelled/u); assert.equal(f.reads,0);
+  const g=launchBindingFixture(),pending=deferred<void>(),read=g.writers.loadLaunchBinding;
+  g.writers.loadLaunchBinding=async () => { await pending.promise; return read(); };
+  const checking=g.controller.assertLaunchBinding(g.request,g.caller.signal);
+  g.caller.abort(); pending.resolve(); await assert.rejects(checking,/cancelled/u);
+});
+
 it("native controller binds a fresh DB ACK to the issued challenge before GO and has no final renewal",async () => {
   const f=fixture();
   assert.deepEqual(await f.controller().run(f.session,f.caller.signal,"payload"),{ state:"closed",exit:f.exit,authorityLost:false });

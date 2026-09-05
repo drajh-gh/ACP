@@ -6,8 +6,10 @@ import { isAbsolute } from "node:path";
 import { parseStableId, type StableId } from "@acp/domain";
 import { minimalCodexEnvironment } from "./codex-sdk-transport.ts";
 import { WorkerTerminationUnconfirmedError } from "./worker-manager.ts";
-import type { WindowsSupervisionScope } from "@acp/storage";
+import { parseWindowsLaunchFence, type WindowsSupervisionScope } from "@acp/storage";
 import type { WindowsLaunchFenceDescriptor } from "./windows-launch-fence.ts";
+import type { NativeFilesystemLeaseIdentity, NativeFilesystemWriterController } from "./native-filesystem-writer-controller.ts";
+import { WindowsFilesystemLeaseChannel, guardFilesystemOwnedWorker, parseNativeFilesystemLeaseIdentity } from "./windows-filesystem-lease-channel.ts";
 
 export interface OwnedWorkerExit {
   /** Present only after an intent-mode bridge durably sealed its exact root. */
@@ -35,6 +37,8 @@ export interface WorkerLaunchRequest {
   readonly signal: AbortSignal;
   /** Must first be bound to a durable launch intent; legacy callers omit it. */
   readonly launchFence?: WindowsLaunchFenceDescriptor;
+  /** Trusted opt-in only. Delivery transport does not yet forward this field. */
+  readonly filesystemLease?: NativeFilesystemLeaseIdentity;
 }
 export interface WorkerLauncher { launch(request: WorkerLaunchRequest): Promise<OwnedWorker>; }
 export interface WindowsWorkerLauncherOptions {
@@ -42,22 +46,38 @@ export interface WindowsWorkerLauncherOptions {
   readonly runnerPath?: string;
   readonly powershellExecutable?: string;
   readonly onSpawn?: (process: { readonly processId: number; readonly purpose: string }) => void;
+  /** Trusted database-bound controller, never caller/model-selected execution. */
+  readonly filesystemWriterController?: NativeFilesystemWriterController;
 }
 
 /** Windows 10+ / PowerShell 7; no unowned create→attach window or PID-only kill. */
 export class WindowsWorkerLauncher implements WorkerLauncher {
   private readonly options: WindowsWorkerLauncherOptions;
-  constructor(options: WindowsWorkerLauncherOptions = {}) { this.options = options; }
+  constructor(options: WindowsWorkerLauncherOptions = {}) { this.options = Object.freeze({ ...options }); }
 
   async launch(request: WorkerLaunchRequest): Promise<OwnedWorker> {
     if (process.platform !== "win32") throw new Error("Windows worker launcher is unavailable on this host");
     parseStableId(request.workerProcessId, "workerProcess");
+    const filesystemLease=request.filesystemLease===undefined ? undefined : parseNativeFilesystemLeaseIdentity(request.filesystemLease);
+    const fence=request.launchFence===undefined ? undefined : parseWindowsLaunchFence(request.launchFence);
+    // No caller-owned mutable request/configuration is consulted after an await.
+    request=Object.freeze({ ...request,...(fence ? { launchFence:Object.freeze({ ...fence,scope:Object.freeze(fence.scope) }) } : {}),
+      ...(filesystemLease ? { filesystemLease } : {}) });
+    if (filesystemLease && (!this.options.filesystemWriterController || filesystemLease.workerProcessId!==request.workerProcessId)) {
+      throw new Error("native filesystem lease requires its configured controller and exact process identity");
+    }
     const remaining = Date.parse(request.deadlineAt) - Date.now();
     if (!Number.isFinite(remaining) || remaining <= 0 || remaining > 86_400_000) throw new Error("invalid persisted worker deadline");
     if (!Number.isSafeInteger(request.maximumOutputBytes) || request.maximumOutputBytes < 1 || request.maximumOutputBytes > 1_048_576) {
       throw new Error("worker output bound must be 1 to 1048576 bytes");
     }
     if (request.signal.aborted) throw new Error("worker launch already cancelled");
+    if (filesystemLease) {
+      if (!fence) throw new Error("persisted filesystem writer launch binding requires a launch fence");
+      await this.options.filesystemWriterController!.assertLaunchBinding({ ...filesystemLease,fence:request.launchFence!,
+        workspace:request.workspace,deadlineAt:request.deadlineAt },request.signal);
+      if (Date.parse(request.deadlineAt)<=Date.now()) throw new Error("persisted worker deadline elapsed during launch preflight");
+    }
     if (!isAbsolute(request.workspace) || !(await stat(request.workspace)).isDirectory()) throw new Error("worker workspace must be an existing absolute directory");
     if (request.signal.aborted) throw new Error("worker launch already cancelled");
     const environment = minimalCodexEnvironment();
@@ -78,6 +98,7 @@ export class WindowsWorkerLauncher implements WorkerLauncher {
     let evidence: Omit<OwnedWorkerExit, "output"> | undefined;
     let failureDiagnostic: unknown;
     let protocolFailed = false;
+    let leaseChannel: WindowsFilesystemLeaseChannel | undefined;
     let forceStop: NodeJS.Timeout | undefined;
     const decoder = new StringDecoder("utf8"); let buffered = "";
     const send = (frame: unknown) => {
@@ -85,7 +106,10 @@ export class WindowsWorkerLauncher implements WorkerLauncher {
     };
     const stop = () => {
       if (stopping || ended) return;
-      stopping = true; send({ type: "stop" }); bridge.stdin.end();
+      stopping = true;
+      leaseChannel?.close();
+      // A failed pipe write must not bypass the independent final-handle close.
+      try { send({ type: "stop" }); bridge.stdin.end(); } catch { bridge.stdin.destroy(); }
       // Last bridge-handle close kills the kernel-owned job. Without an explicit
       // tree-empty frame this remains unconfirmed in the durable journal.
       forceStop = setTimeout(() => { if (!ended) bridge.kill(); }, 6_000);
@@ -95,7 +119,7 @@ export class WindowsWorkerLauncher implements WorkerLauncher {
     if (request.signal.aborted) stop();
     bridge.stdin.on("error", () => { stop(); });
     bridge.stderr.on("data", (data: Buffer) => { errorBytes += data.length; if (errorBytes > 65_536) stop(); });
-    bridge.on("error", (error) => { ready.reject(error); completion.reject(error); });
+    bridge.on("error", (error) => { leaseChannel?.close(); ready.reject(error); completion.reject(error); });
     bridge.stdout.on("data", (data: Buffer) => {
       try {
         buffered += decoder.write(data);
@@ -109,10 +133,14 @@ export class WindowsWorkerLauncher implements WorkerLauncher {
                 || typeof frame.processStartToken !== "string" || !/^win32-filetime:[0-9]{16,20}$/u.test(frame.processStartToken)
                 || typeof frame.startedAt !== "string" || !Number.isFinite(Date.parse(frame.startedAt))) throw new Error("invalid native identity");
             const scope = parseWindowsSupervisionScope(frame.scope);
+            if (filesystemLease) leaseChannel=new WindowsFilesystemLeaseChannel(filesystemLease,frame.filesystemLeaseChallenge,send,stop);
+            else if (frame.filesystemLeaseChallenge!==undefined) throw new Error("unexpected native filesystem lease mode");
             receivedReady = true;
             reportSpawn({ processId: frame.processId as number, purpose: "ACP suspended SDK runner" });
             ready.resolve({ scope, processId: frame.processId as number, processStartToken: frame.processStartToken,
               startedAt: new Date(frame.startedAt).toISOString() });
+          } else if ((frame.type==="lease-challenge" || frame.type==="lease-accepted") && receivedReady && !evidence && leaseChannel) {
+            leaseChannel.receive(frame);
           } else if (frame.type === "output" && receivedReady && !evidence && typeof frame.data === "string") {
             if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(frame.data)) throw new Error("invalid native output encoding");
             const bytes = Buffer.from(frame.data, "base64"); outputBytes += bytes.length;
@@ -123,7 +151,9 @@ export class WindowsWorkerLauncher implements WorkerLauncher {
               && Number.isSafeInteger(frame.exitCode) && typeof frame.terminated === "boolean") {
             evidence = { treeEmpty: true, exitCode: frame.exitCode as number, terminated: frame.terminated, failed: protocolFailed,
               ...(request.launchFence === undefined ? {} : { launchSealed: true }) };
+            leaseChannel?.close();
           } else if (frame.type === "failure" && !evidence) {
+            leaseChannel?.close();
             failureDiagnostic = { stage: frame.stage, code: frame.errorCode, line: frame.scriptLine };
             if (frame.treeEmpty === true && (request.launchFence === undefined || frame.launchSealed === true)) {
               evidence = { treeEmpty: true, exitCode: 137, terminated: true, failed: true,
@@ -141,6 +171,7 @@ export class WindowsWorkerLauncher implements WorkerLauncher {
     });
     bridge.on("close", () => {
       ended = true; clearTimeout(deadline); if (forceStop) clearTimeout(forceStop);
+      leaseChannel?.close();
       request.signal.removeEventListener("abort", stop);
       if (evidence && buffered.trim() === "") completion.resolve({ ...evidence, output: Buffer.concat(chunks).toString("utf8") });
       else {
@@ -154,10 +185,11 @@ export class WindowsWorkerLauncher implements WorkerLauncher {
         this.options.runnerPath ?? fileURLToPath(new URL("./codex-sdk-runner.ts", import.meta.url))],
       workspace: request.workspace, maximumOutputBytes: request.maximumOutputBytes,
       ...(request.launchFence === undefined ? {} : { launchFence: request.launchFence }),
+      ...(filesystemLease===undefined ? {} : { filesystemLease }),
       environment: Object.entries(environment).map(([key, value]) => `${key}=${value}`) });
     try {
       const identity = await ready.promise;
-      return { ...identity, closed: completion.promise,
+      const raw: OwnedWorker={ ...identity, closed: completion.promise,
         release(input: string) {
           if (released || stopping || ended) throw new Error("worker cannot be released twice or after termination");
           const frame = { type: "go", input };
@@ -166,6 +198,7 @@ export class WindowsWorkerLauncher implements WorkerLauncher {
         },
         async terminate() { stop(); return completion.promise; },
       };
+      return leaseChannel ? guardFilesystemOwnedWorker(raw,leaseChannel,this.options.filesystemWriterController!,request.signal) : raw;
     } catch (error) {
       stop(); await completion.promise.catch(() => {}); throw error;
     }

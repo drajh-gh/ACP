@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 import { parseStableId, type StableId } from "@acp/domain";
-import type { FilesystemWriterLease, PostgresFilesystemWriterStore } from "@acp/storage";
+import { parseWindowsLaunchFence, type WindowsLaunchFenceDescriptor, type FilesystemWriterLease, type PostgresFilesystemWriterStore } from "@acp/storage";
 import type { OwnedWorker, OwnedWorkerExit } from "./windows-worker-launcher.ts";
 
 export interface NativeFilesystemLeaseIdentity {
@@ -14,6 +14,11 @@ export interface NativeFilesystemLeaseCommit extends NativeFilesystemLeaseIdenti
   readonly durationMilliseconds: number;
 }
 export interface NativeFilesystemLeaseAcceptance extends NativeFilesystemLeaseChallenge { readonly revision: number; }
+export interface NativeFilesystemWriterLaunchRequest extends NativeFilesystemLeaseIdentity {
+  readonly fence: WindowsLaunchFenceDescriptor;
+  readonly workspace: string;
+  readonly deadlineAt: string;
+}
 /** @internal Trusted private bridge port, never an SDK/dispatch-selected adapter.
  * The root is already suspended and its first challenge was issued before this
  * controller runs. Native waits must be bounded and settle on bridge closure;
@@ -29,10 +34,12 @@ export interface NativeFilesystemWriterSession extends OwnedWorker {
 export type NativeFilesystemWriterOutcome = { readonly state: "unconfirmed" }
   | { readonly state: "closed"; readonly exit: OwnedWorkerExit; readonly authorityLost: boolean };
 export interface NativeFilesystemWriterControllerOptions { readonly renewalIntervalMs?: number; }
-type WriterStore = Pick<PostgresFilesystemWriterStore, "authority" | "load" | "heartbeat">;
+type WriterStore = Pick<PostgresFilesystemWriterStore, "authority" | "load" | "heartbeat">
+  & Partial<Pick<PostgresFilesystemWriterStore,"loadLaunchBinding">>;
 
 /** Fresh database ACK → private native epoch. No acquisition, receipt, result or
- * release writes; no filesystem pinning or production launcher wiring.
+ * release writes or filesystem pinning. Public leased launchers also require
+ * the original persisted launch binding before creating native ownership.
  */
 export class NativeFilesystemWriterController {
   private readonly writers: WriterStore;
@@ -42,6 +49,19 @@ export class NativeFilesystemWriterController {
     const interval=options.renewalIntervalMs ?? 1000;
     if (!Number.isSafeInteger(interval) || interval<1 || interval>5000) throw new TypeError("native writer renewal interval must be 1 to 5000 ms");
     this.writers=writers; this.owner=Object.freeze({ ...writers.authority }); this.interval=interval;
+  }
+  async assertLaunchBinding(value: NativeFilesystemWriterLaunchRequest, signal: AbortSignal): Promise<void> {
+    if (signal.aborted) throw new Error("worker launch already cancelled");
+    const request={ leaseId:parseStableId(value.leaseId,"lease"),runId:parseStableId(value.runId,"run"),
+      workerProcessId:parseStableId(value.workerProcessId,"workerProcess"),fence:parseWindowsLaunchFence(value.fence),
+      workspace:value.workspace,deadlineAt:new Date(value.deadlineAt).toISOString() };
+    if (!this.writers.loadLaunchBinding) throw new Error("persisted filesystem writer launch binding read required");
+    const binding=await this.writers.loadLaunchBinding(request.leaseId);
+    if (signal.aborted) throw new Error("worker launch already cancelled");
+    if (!binding || !this.owned(binding.lease) || binding.lease.leaseId!==request.leaseId || binding.lease.runId!==request.runId
+        || binding.lease.workerProcessId!==request.workerProcessId || binding.intent.workerProcessId!==request.workerProcessId
+        || binding.workspace!==request.workspace || binding.deadlineAt!==request.deadlineAt
+        || !isDeepStrictEqual(binding.intent.fence,request.fence)) throw new Error("persisted filesystem writer launch binding mismatch");
   }
   async run(session: NativeFilesystemWriterSession, signal: AbortSignal, input: string): Promise<NativeFilesystemWriterOutcome> {
     let identity: NativeFilesystemLeaseIdentity, current: FilesystemWriterLease;

@@ -3,6 +3,10 @@
 Status: Accepted private controller prerequisite. No public launcher or delivery
 transport wiring; no filesystem isolation claim.
 
+The subsequent opt-in public launcher channel and persisted target preflight are
+specified in [ADR0013](0013-private-native-lease-channel.md). The scope and evidence
+below describe the original standalone controller checkpoint.
+
 ADR0011 supplies a native clock and an independently enforced deadline. Its raw
 frames cannot prove a database commit. `NativeFilesystemWriterController` supplies
 the trusted ordering contract over an internal, already-suspended native session:

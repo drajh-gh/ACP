@@ -1,4 +1,4 @@
-param([switch]$Internal, [ValidateSet('supervision', 'launch-fence', 'filesystem', 'lease-watchdog', 'lease-liveness', 'lease-bootstrap')][string]$Suite = 'supervision', [string]$TestNamePattern)
+param([switch]$Internal, [ValidateSet('supervision', 'launch-fence', 'filesystem', 'lease-watchdog', 'lease-liveness', 'lease-bootstrap', 'lease-channel', 'lease-channel-liveness')][string]$Suite = 'supervision', [string]$TestNamePattern)
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 if (-not $Internal) {
@@ -36,6 +36,8 @@ $testFile = switch ($Suite) {
   'lease-watchdog' { 'apps/worker/test/integration/windows-lease-watchdog.test.ts' }
   'lease-liveness' { 'apps/worker/test/integration/windows-lease-watchdog.test.ts' }
   'lease-bootstrap' { 'apps/worker/test/integration/windows-lease-watchdog.test.ts' }
+  'lease-channel' { 'apps/worker/test/integration/windows-lease-channel.test.ts' }
+  'lease-channel-liveness' { 'apps/worker/test/integration/windows-lease-channel-liveness.test.ts' }
   default { 'apps/worker/test/integration/windows-worker.test.ts' }
 }
 foreach ($argument in @('--experimental-strip-types', '--test', '--test-concurrency=1', '--test-reporter=spec')) { $testInfo.ArgumentList.Add($argument) }

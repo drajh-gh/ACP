@@ -17,3 +17,9 @@ explain how its fixed technology choices shape the repository.
 | [0005](0005-remote-mcp-plugin.md) | Authenticated remote MCP plugin |
 | [0006](0006-deterministic-effect-mediation.md) | Deterministic effect mediation |
 | [0007](0007-host-filesystem-bindings.md) | Immutable host filesystem bindings |
+| [0008](0008-filesystem-writer-leases.md) | Dedicated filesystem writer exclusion |
+| [0009](0009-leased-native-preflight.md) | Lease-bracketed native preflight |
+| [0010](0010-cooperative-writer-renewal.md) | Cooperative writer renewal |
+| [0011](0011-native-lease-watchdog.md) | Native lease-epoch watchdog |
+| [0012](0012-native-writer-controller.md) | Database-bound native writer controller |
+| [0013](0013-private-native-lease-channel.md) | Private leased launch and persisted target binding |

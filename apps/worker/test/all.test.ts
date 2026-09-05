@@ -12,3 +12,4 @@ import "./windows-repository-observer.test.ts";
 import "./windows-leased-worktree-observer.test.ts";
 import "./filesystem-writer-guard.test.ts";
 import "./native-filesystem-writer-controller.test.ts";
+import "./windows-filesystem-lease-channel.test.ts";
