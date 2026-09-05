@@ -14,7 +14,7 @@ import {
 import type { QueryResult, QueryResultRow } from "pg";
 
 import type { ConnectionPool, TransactionClient } from "../src/database.ts";
-import { PostgresWorkerRuntimeStore } from "../src/worker-runtime-store.ts";
+import { PostgresWorkerRuntimeStore, type WorkerRunStart } from "../src/worker-runtime-store.ts";
 
 type Response =
   | { readonly rows?: readonly QueryResultRow[]; readonly rowCount?: number }
@@ -169,6 +169,37 @@ describe("PostgresWorkerRuntimeStore", () => {
       null,
     ]);
     assert.equal(pool.queries[0]?.values[14], 300_000);
+  });
+
+  it("admits the run and its exact launch intent in one transaction", async () => {
+    const start = launchStart();
+    const pool = new ScriptedPool([{ rows: [{ run_id: start.runId, started_at: new Date(start.request.at),
+      timeout_at: new Date(Date.parse(start.request.at) + start.wallTimeMs) }] }, { rows: [intentRow(start)] }]);
+    const started = await new PostgresWorkerRuntimeStore(pool).startRun(start);
+    assert.deepEqual(started.launchIntent, start.launchIntent);
+    assert.deepEqual(pool.queries.map((q) => q.text.trim().split(/\s/u)[0]), ["BEGIN", "INSERT", "INSERT", "COMMIT"]);
+    assert.equal(pool.queries[1]?.values[16], start.launchIntent?.workerProcessId);
+    assert.match(pool.queries[1]!.text, /launch_worker_process_id/u);
+    assert.match(pool.queries[2]!.text, /worker_launch_intents/u);
+  });
+
+  it("rolls back admission when intent persistence fails or returns a different identity", async () => {
+    for (const response of [new Error("intent insert failed"), { rows: [{ ...intentRow(launchStart()), directory_identity: "win32-dir:00000000:0000000000000000" }] }]) {
+      const start = launchStart();
+      const pool = new ScriptedPool([{ rows: [{ run_id: start.runId, started_at: new Date(start.request.at), timeout_at: new Date(start.request.at) }] }, response]);
+      await assert.rejects(new PostgresWorkerRuntimeStore(pool).startRun(start), /intent/u);
+      assert.equal(pool.queries.at(-1)?.text, "ROLLBACK");
+      assert.equal(pool.queries.some((q) => q.text === "COMMIT"), false);
+    }
+  });
+
+  it("rejects an invalid launch descriptor or missing dispatch generation before database access", async () => {
+    const start = launchStart(), pool = new ScriptedPool([]), store = new PostgresWorkerRuntimeStore(pool);
+    const { dispatchGeneration: _generation, ...withoutGeneration } = start;
+    await assert.rejects(store.startRun(withoutGeneration), /dispatch generation/u);
+    await assert.rejects(store.startRun({ ...start, launchIntent: { ...start.launchIntent!, fence: {
+      ...start.launchIntent!.fence, directory: "relative" } } }), /directory identity/u);
+    assert.equal(pool.queries.length, 0);
   });
 
   it("persists a terminal result transactionally", async () => {
@@ -603,6 +634,24 @@ function packetFor(): ContextPacket {
       maximumOutputBytes: 32_768,
     },
   });
+}
+
+function launchStart(): WorkerRunStart {
+  const packet = packetFor();
+  return { runId: createStableId("run"), dispatchGeneration: 1, packet, attemptNumber: 1, hostIdentifier: "host:test",
+    resourceClass: "lightweight_read", wallTimeMs: 300000, provenanceId: createStableId("provenance"),
+    request: { missionId: packet.missionId, nodeId: packet.nodeId, projectId: packet.projectId, role: packet.workerRole,
+      resourceClass: "lightweight_read", operation: "repository.inspect", resource: "repository:acp", mode: "read",
+      workspace: "C:/workspace/acp", networkAccess: "none", at: "2026-09-04T12:00:00.000Z" },
+    launchIntent: { workerProcessId: createStableId("workerProcess"), fence: { directory: "C:\\ACP\\launches",
+      directoryIdentity: "win32-dir:12345678:0000000000000001",
+      scope: { machineFingerprint: "a".repeat(64), bootedAt: "2026-09-01T00:00:00.000Z", sessionId: 1 } } } };
+}
+
+function intentRow(start: WorkerRunStart) {
+  const intent = start.launchIntent!;
+  return { worker_process_id: intent.workerProcessId, directory_path: intent.fence.directory,
+    directory_identity: intent.fence.directoryIdentity, supervision_scope: intent.fence.scope };
 }
 
 function processRow() {

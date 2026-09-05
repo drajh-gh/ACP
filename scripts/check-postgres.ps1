@@ -285,11 +285,13 @@ try {
   Invoke-AcpNodeCheck 'packages/storage/test/integration/lifecycle-context.ts' 'Lifecycle upgrade preflight' 'preflight'
   Invoke-AcpSqlFile 'packages/storage/migrations/0009_lifecycle_context.sql' '0009 populated upgrade'
   Invoke-AcpSqlFile 'packages/storage/migrations/0010_worker_handoff.sql' '0010 populated upgrade'
+  Invoke-AcpSqlFile 'packages/storage/migrations/0011_worker_launch_intents.sql' '0011 populated upgrade'
   if (-not $LifecycleOnly) {
     Invoke-AcpNodeCheck 'packages/storage/test/integration/host-dispatch.ts' 'Host dispatch integration' -TimeoutSeconds 45
   }
   Invoke-AcpNodeCheck 'packages/storage/test/integration/lifecycle-context.ts' 'Lifecycle context integration' 'after'
   Invoke-AcpNodeCheck 'packages/storage/test/integration/worker-handoff.ts' 'Worker handoff integration'
+  Invoke-AcpNodeCheck 'packages/storage/test/integration/worker-launch-intent.ts' 'Worker launch-intent integration'
 
   $unpauseSql = @'
 BEGIN;
@@ -442,6 +444,8 @@ COMMIT;
     throw "Concurrency probe failed: A=$($sessionAJob.State), B=$($sessionBJob.State)"
   }
 
+  Invoke-AcpSqlFile 'packages/storage/migrations/0011_worker_launch_intents.down.sql' '0011 down'
+  Invoke-AcpSqlText "DO `$`$ BEGIN IF NOT EXISTS (SELECT 1 FROM acp.mission_events WHERE event_type = 'worker.launch-admitted') THEN RAISE EXCEPTION 'launch audit receipt lost on downgrade'; END IF; END; `$`$;" 'launch audit receipt survives downgrade'
   Invoke-AcpSqlFile 'packages/storage/migrations/0010_worker_handoff.down.sql' '0010 down'
   Invoke-AcpSqlText "DO `$`$ BEGIN IF NOT EXISTS (SELECT 1 FROM acp.mission_events WHERE event_type = 'worker.recovery-handed-off') THEN RAISE EXCEPTION 'handoff audit receipt lost on downgrade'; END IF; END; `$`$;" 'handoff audit receipt survives downgrade'
   Invoke-AcpSqlFile 'packages/storage/migrations/0009_lifecycle_context.down.sql' '0009 down'

@@ -155,13 +155,14 @@ Never truncate, delete, relocate or restore seal files as ordinary cleanup.
 They fence potentially delayed launchers; losing that history can reopen an
 old identity. Storage failure fails closed. This is trusted-host process-lifetime
 coordination, not a security boundary against a hostile same-user administrator.
-Database launch-intent admission, revocation and no-journal result projection
-remain a separate unfinished integration. Existing consumers do not yet pass
-this option; a native seal alone must not be used to terminalize historical runs.
+Database launch-intent admission now has an opt-in atomic storage boundary in
+migration 0011. Revocation, no-journal stop receipts and consumer recovery remain
+unfinished. Existing consumers do not yet pass this option; a native seal alone
+must not be used to terminalize historical runs.
 
 ## Verification
 
-`scripts/check-postgres.ps1` applies all ten ACP migrations, tests real DBOS
+`scripts/check-postgres.ps1` applies all eleven ACP migrations, tests real DBOS
 host queues and supervised admission (including a native synthetic runner on
 Windows), kills a journaled native owner and recovers its durable state, reverses
 the migrations, and removes its owned PostgreSQL container. The lifecycle suite

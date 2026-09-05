@@ -10,3 +10,4 @@ export * from "./migrations.ts";
 export * from "./runtime-store.ts";
 export * from "./worker-runtime-store.ts";
 export * from "./worker-recovery-store.ts";
+export * from "./worker-launch-intent.ts";

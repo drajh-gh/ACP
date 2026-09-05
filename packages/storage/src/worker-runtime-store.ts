@@ -14,10 +14,12 @@ import {
   type WorkerResultStatus,
 } from "@acp/domain";
 import type { QueryResultRow } from "pg";
+import { isDeepStrictEqual } from "node:util";
 
 import type { ConnectionPool } from "./database.ts";
 import { withTransaction } from "./database.ts";
 import type { WorkerRecoveryAuthority } from "./worker-recovery-store.ts";
+import { parseWorkerLaunchIntent, type WorkerLaunchIntent } from "./worker-launch-intent.ts";
 
 export interface CapabilityGrantInsert
   extends Omit<CapabilityGrant, "attemptsUsed"> {
@@ -58,6 +60,7 @@ export interface AvailableWorkerHost {
 }
 
 export interface WorkerRunStart {
+  readonly launchIntent?: WorkerLaunchIntent;
   readonly dispatchGeneration?: number;
   readonly runId: StableId<"run">;
   readonly packet: ContextPacket;
@@ -70,6 +73,7 @@ export interface WorkerRunStart {
 }
 
 export interface StartedWorkerRun {
+  readonly launchIntent?: WorkerLaunchIntent;
   readonly runId: StableId<"run">;
   readonly startedAt: string;
   readonly timeoutAt: string;
@@ -538,19 +542,22 @@ export class PostgresWorkerRuntimeStore implements WorkerRunPersistence {
     const networkDestination = start.request.networkAccess === "required"
       ? start.request.networkDestination
       : undefined;
-    const result = await this.pool.query<RunRow>(
-      `INSERT INTO acp.worker_runs (
+    const launchIntent = start.launchIntent === undefined ? undefined : parseWorkerLaunchIntent(start.launchIntent);
+    if (launchIntent && (!Number.isInteger(start.dispatchGeneration) || start.dispatchGeneration! < 1)) {
+      throw new Error("launch intent requires an exact dispatch generation");
+    }
+    const sql = `INSERT INTO acp.worker_runs (
          run_id, mission_id, node_id, context_packet_id, attempt_number, state,
          started_at, provenance_id, transition_provenance_id,
          capability_grant_id, host_identifier, resource_class, operation, resource,
-         requested_mode, workspace, network_destination, timeout_at${start.dispatchGeneration === undefined ? "" : ", dispatch_generation"}
+         requested_mode, workspace, network_destination, timeout_at${start.dispatchGeneration === undefined ? "" : ", dispatch_generation"}${launchIntent ? ", launch_worker_process_id" : ""}
        ) VALUES (
          $1, $2, $3, $4, $5, 'started', statement_timestamp(), $6, $6,
          $7, $8, $9, $10, $11, $12, $13, $14,
-         statement_timestamp() + ($15::double precision * interval '1 millisecond')${start.dispatchGeneration === undefined ? "" : ", $16"}
+         statement_timestamp() + ($15::double precision * interval '1 millisecond')${start.dispatchGeneration === undefined ? "" : ", $16"}${launchIntent ? ", $17" : ""}
        )
-       RETURNING run_id, started_at, timeout_at`,
-      [
+       RETURNING run_id, started_at, timeout_at`;
+    const values = [
         start.runId,
         packet.missionId,
         packet.nodeId,
@@ -567,13 +574,30 @@ export class PostgresWorkerRuntimeStore implements WorkerRunPersistence {
         networkDestination ?? null,
         start.wallTimeMs,
         ...(start.dispatchGeneration === undefined ? [] : [start.dispatchGeneration]),
-      ],
-    );
+        ...(launchIntent ? [launchIntent.workerProcessId] : []),
+      ];
+    const result = launchIntent === undefined ? await this.pool.query<RunRow>(sql, values)
+      : await withTransaction(this.pool, async (client) => {
+        const admitted = await client.query<RunRow>(sql, values);
+        const inserted = await client.query<{ worker_process_id: string; directory_path: string; directory_identity: string; supervision_scope: unknown }>(
+          `INSERT INTO acp.worker_launch_intents(run_id, worker_process_id, protocol, directory_path, directory_identity, supervision_scope)
+           VALUES($1, $2, 'windows_fence_v1', $3, $4, $5::jsonb)
+           RETURNING worker_process_id, directory_path, directory_identity, supervision_scope`,
+          [start.runId, launchIntent.workerProcessId, launchIntent.fence.directory, launchIntent.fence.directoryIdentity, JSON.stringify(launchIntent.fence.scope)]);
+        const intentRow = inserted.rows[0];
+        if (!intentRow || !isDeepStrictEqual(parseWorkerLaunchIntent({ workerProcessId: intentRow.worker_process_id,
+          fence: { directory: intentRow.directory_path, directoryIdentity: intentRow.directory_identity, scope: intentRow.supervision_scope } }),
+            launchIntent)) throw new Error("launch intent was not persisted with its exact identity");
+        const runRow = admitted.rows[0];
+        if (!runRow || runRow.run_id !== start.runId) throw new Error("worker run was not persisted with its exact identity");
+        return admitted;
+      });
     const row = result.rows[0];
     if (row === undefined || row.run_id !== start.runId) {
       throw new Error("worker run was not persisted with its exact identity");
     }
     return {
+      ...(launchIntent === undefined ? {} : { launchIntent }),
       runId: row.run_id,
       startedAt: row.started_at.toISOString(),
       timeoutAt: row.timeout_at.toISOString(),

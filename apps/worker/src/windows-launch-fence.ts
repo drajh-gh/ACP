@@ -1,16 +1,10 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { isAbsolute, resolve, win32 } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import { parseStableId, type StableId } from "@acp/domain";
-import type { WindowsSupervisionScope } from "@acp/storage";
+import { parseWindowsLaunchFence, type WindowsLaunchFenceDescriptor } from "@acp/storage";
 import { minimalCodexEnvironment } from "./codex-sdk-transport.ts";
-import { parseWindowsSupervisionScope } from "./windows-worker-launcher.ts";
-
-export interface WindowsLaunchFenceDescriptor {
-  readonly directory: string;
-  readonly directoryIdentity: string;
-  readonly scope: WindowsSupervisionScope;
-}
+export { parseWindowsLaunchFence, type WindowsLaunchFenceDescriptor } from "@acp/storage";
 export type WindowsLaunchObservation = { readonly state: "unconfirmed" } | {
   readonly state: "lost" | "terminated";
   readonly sealed: true;
@@ -20,18 +14,6 @@ export type WindowsLaunchObservation = { readonly state: "unconfirmed" } | {
 };
 export interface WindowsLaunchFenceOptions {
   readonly onSpawn?: (pid: number, purpose: string) => void;
-}
-
-export function parseWindowsLaunchFence(value: unknown): WindowsLaunchFenceDescriptor {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("missing launch fence");
-  const input = value as Record<string, unknown>;
-  if (Object.keys(input).length !== 3 || typeof input.directory !== "string" || input.directory.length > 4096
-      || !/^[a-z]:\\/iu.test(input.directory) || /[\u0000-\u001f]/u.test(input.directory)
-      || win32.normalize(input.directory).replace(/\\$/u, "") === win32.parse(input.directory).root.replace(/\\$/u, "")
-      || typeof input.directoryIdentity !== "string" || !/^win32-dir:[0-9a-f]{8}:[0-9a-f]{16}$/u.test(input.directoryIdentity)) {
-    throw new Error("invalid launch fence directory identity");
-  }
-  return { directory: input.directory, directoryIdentity: input.directoryIdentity, scope: parseWindowsSupervisionScope(input.scope) };
 }
 
 /** Read-only identity of an existing trusted, non-synced, non-model-writable directory. */

@@ -212,3 +212,29 @@ reject cancelled work before terminal mission projection. This does not bypass
 the journaled-process stop guard. Existing runs and packets remain readable
 history across upgrade; the 0006 downgrade removes dispatch machinery without
 deleting their history.
+
+## Durable launch-intent admission (0011)
+
+`WorkerRunStart.launchIntent` is an opt-in storage prerequisite. It selects one
+WPR and an exact persistent Windows fence descriptor before admission. The run
+marker and immutable intent commit in one transaction, with a deferred composite
+foreign key preventing a committed run without its exact intent. The database
+derives owner/session, assignment generation, application version, provenance,
+job name and deadline from admitted authority. A lost commit acknowledgement must
+be reconciled by that original identity, never retried with a new launch identity.
+
+Legacy runs retain a null marker and cannot be upgraded afterward. Process
+journals must match the intent WPR, job and OS scope. A missing journal blocks
+run/node/mission terminalization and retains capacity; the exact terminal journal
+currently permits normal completion. Intent-mode runs cannot use the older
+process-only handoff/claim lane. A separate immutable mission event preserves
+admission history across downgrade, which refuses unresolved intents under locks.
+Legacy journals and intents reserve WPRs under one cross-table transaction lock.
+Intent process/result mutations require the original live owner provenance;
+session retirement and host availability/TTL changes fence process writes in
+parent-to-process order. Authority tables cannot be truncated around those guards.
+
+The manager and supervised transport do not yet enable this storage option.
+Permanent revocation, no-journal stop receipts, fresh recovery claims, and consumer
+wiring remain unfinished. This migration does not establish native stop evidence
+or authorize filesystem setup, nor does it change historical recovery behavior.
