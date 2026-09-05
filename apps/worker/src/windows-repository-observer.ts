@@ -22,14 +22,14 @@ export type WindowsWorktreeObservation = { readonly state: "unconfirmed" } | {
 /** Read-only observation. Does not register a binding, obtain a lease, or enable delivery. */
 export async function observeWindowsRepository(checkout: string, signal: AbortSignal,
   options: WindowsRepositoryObserverOptions): Promise<WindowsRepositoryObservation> {
-  validatePath(checkout); validateOptions(options);
+  validatePath(checkout); validateWindowsRepositoryObserverOptions(options);
   return parseObservation(await helper({ operation: "repository", checkout }, signal, options), "repository") as WindowsRepositoryObservation;
 }
 
 /** Rechecks exact native repository identities and machine before reading its linked worktree. */
 export async function observeWindowsWorktree(repository: RepositoryBindingInput, workspace: string, signal: AbortSignal,
   options: WindowsRepositoryObserverOptions): Promise<WindowsWorktreeObservation> {
-  const binding = parseRepositoryBinding(repository); validatePath(workspace); validateOptions(options);
+  const binding = parseRepositoryBinding(repository); validatePath(workspace); validateWindowsRepositoryObserverOptions(options);
   const result = parseObservation(await helper({ operation: "worktree", repository: {
     checkout: binding.checkout, commonGitDirectory: binding.commonGitDirectory, machineFingerprint: binding.machineFingerprint,
   }, workspace }, signal, options), "worktree") as WindowsWorktreeObservation;
@@ -37,7 +37,7 @@ export async function observeWindowsWorktree(repository: RepositoryBindingInput,
 }
 
 function validatePath(path: string) { parseWindowsDirectoryBinding({ path, identity: "win32-dir:00000000:0000000000000000" }); }
-function validateOptions(options: WindowsRepositoryObserverOptions) {
+export function validateWindowsRepositoryObserverOptions(options: WindowsRepositoryObserverOptions): void {
   validatePath(options.gitExecutable);
   if (win32.basename(options.gitExecutable).toLowerCase() !== "git.exe") throw new TypeError("trusted absolute git.exe required");
 }

@@ -7,6 +7,7 @@ param(
   [switch]$FilesystemBindings,
   [switch]$FilesystemNative,
   [switch]$FilesystemLeases,
+  [switch]$FilesystemLeaseNative,
   [switch]$MigrationSessions,
   [Parameter(DontShow)]
   [switch]$Internal,
@@ -21,7 +22,8 @@ if ($HostOnly -and ($LifecycleOnly -or $LaunchRecovery)) { throw 'HostOnly canno
 if ($FilesystemBindings -and (-not $LifecycleOnly -or -not $LaunchRecovery -or $LaunchNative)) { throw 'FilesystemBindings requires LifecycleOnly and LaunchRecovery, without LaunchNative' }
 if ($FilesystemNative -and -not $FilesystemBindings) { throw 'FilesystemNative requires FilesystemBindings' }
 if ($FilesystemLeases -and (-not $FilesystemBindings -or $FilesystemNative)) { throw 'FilesystemLeases requires FilesystemBindings, without FilesystemNative' }
-if ($MigrationSessions -and ($LifecycleOnly -or $HostOnly -or $LaunchRecovery -or $LaunchNative -or $FilesystemBindings -or $FilesystemNative -or $FilesystemLeases)) { throw 'MigrationSessions is a standalone bounded gate' }
+if ($FilesystemLeaseNative -and -not $FilesystemLeases) { throw 'FilesystemLeaseNative requires FilesystemLeases' }
+if ($MigrationSessions -and ($LifecycleOnly -or $HostOnly -or $LaunchRecovery -or $LaunchNative -or $FilesystemBindings -or $FilesystemNative -or $FilesystemLeases -or $FilesystemLeaseNative)) { throw 'MigrationSessions is a standalone bounded gate' }
 
 function Invoke-BoundedDocker {
   param(
@@ -94,6 +96,7 @@ if (-not $Internal) {
   if ($FilesystemBindings) { $commandLine += ' -FilesystemBindings' }
   if ($FilesystemNative) { $commandLine += ' -FilesystemNative' }
   if ($FilesystemLeases) { $commandLine += ' -FilesystemLeases' }
+  if ($FilesystemLeaseNative) { $commandLine += ' -FilesystemLeaseNative' }
   if ($MigrationSessions) { $commandLine += ' -MigrationSessions' }
   $integrationProcess = $null
 
@@ -273,7 +276,8 @@ try {
     $checkStartInfo.RedirectStandardOutput = $true
     $checkStartInfo.RedirectStandardError = $true
     $checkStartInfo.WorkingDirectory = $repositoryRoot
-    if ($FilesystemNative -and $RelativePath -eq 'packages/storage/test/integration/filesystem-bindings.ts') {
+    if (($FilesystemNative -and $RelativePath -eq 'packages/storage/test/integration/filesystem-bindings.ts') -or
+        ($FilesystemLeaseNative -and $RelativePath -eq 'packages/storage/test/integration/filesystem-writer-leases.ts')) {
       $checkStartInfo.Environment['ACP_TEST_GIT'] = (Get-Command git -CommandType Application | Select-Object -First 1).Source
     }
     foreach ($argument in @('--experimental-strip-types', $RelativePath, $checkPort)) {
@@ -340,7 +344,8 @@ try {
         Invoke-AcpSqlFile 'packages/storage/migrations/0014_filesystem_writer_leases.sql' '0014 filesystem writer upgrade'
         Invoke-AcpSqlFile 'packages/storage/migrations/0014_filesystem_writer_leases.down.sql' '0014 empty writer downgrade'
         Invoke-AcpSqlFile 'packages/storage/migrations/0014_filesystem_writer_leases.sql' '0014 filesystem writer re-upgrade'
-        Invoke-AcpNodeCheck 'packages/storage/test/integration/filesystem-writer-leases.ts' 'Filesystem writer lease integration' -TimeoutSeconds 30
+        $writerPhase = if ($FilesystemLeaseNative) { 'native' } else { '' }
+        Invoke-AcpNodeCheck 'packages/storage/test/integration/filesystem-writer-leases.ts' 'Filesystem writer lease integration' $writerPhase -TimeoutSeconds 30
       }
     }
     Write-Host 'Launch recovery checks passed. No-journal receipts intentionally block producer downgrade; removing only the owned disposable database.'

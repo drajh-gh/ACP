@@ -5,11 +5,13 @@ import { tmpdir } from "node:os";
 import { join, resolve, relative, isAbsolute } from "node:path";
 import type { Pool } from "pg";
 import { createStableId } from "@acp/domain";
-import { PostgresRepositoryBindingStore, type RepositoryBindingInput, type WorktreeBindingInput } from "../../src/index.ts";
+import { PostgresRepositoryBindingStore, PostgresFilesystemWriterStore, type RepositoryBindingInput, type WorktreeBindingInput } from "../../src/index.ts";
 import { observeWindowsRepository, observeWindowsWorktree } from "../../../../apps/worker/src/windows-repository-observer.ts";
+import { WindowsLeasedWorktreeObserver } from "../../../../apps/worker/src/windows-leased-worktree-observer.ts";
+import { describeWindowsLaunchFence } from "../../../../apps/worker/src/windows-launch-fence.ts";
 import { launchRecoveryFixture } from "./launch-recovery-fixture.ts";
 
-export async function runNativeFilesystemBindings(pool: Pool) {
+export async function runNativeFilesystemBindings(pool: Pool, leased = false) {
   if (process.platform !== "win32") throw new Error("native filesystem gate requires Windows");
   const gitExecutable=process.env.ACP_TEST_GIT; assert.ok(gitExecutable && isAbsolute(gitExecutable));
   const pids=new Set<number>(),report=(pid: number,purpose: string) => { pids.add(pid); process.stdout.write(`Owned PID ${pid}: ${purpose}\n`); };
@@ -31,7 +33,11 @@ export async function runNativeFilesystemBindings(pool: Pool) {
     await mkdir(checkout); await git("init","--initial-branch=main",checkout);
     await git("-C",checkout,"-c","user.name=ACP synthetic test","-c","user.email=acp@example.invalid","commit","--allow-empty","-m","Native database fixture");
     await git("-C",checkout,"worktree","add","-b","Feature/NativeCase",workspace);
-    const f=await launchRecoveryFixture(pool,"host:filesystem-native-check","0013"),a=await f.assignment();
+    const f=await launchRecoveryFixture(pool,"host:filesystem-native-check",leased ? "0014" : "0013");
+    const fenceDirectory=join(root,"launch-seals");
+    if (leased) await mkdir(fenceDirectory);
+    const fence=leased ? await describeWindowsLaunchFence(fenceDirectory,signal(),{ onSpawn:report }) : undefined;
+    const a=await f.assignment(fence,leased ? workspace : undefined,leased);
     const store=new PostgresRepositoryBindingStore(pool,f.runtime);
     async function provenance() {
       const id=createStableId("provenance");
@@ -56,8 +62,37 @@ export async function runNativeFilesystemBindings(pool: Pool) {
     assert.equal(tree.branchRef,"refs/heads/Feature/NativeCase");
     process.stdout.write("PASS native filesystem binding: actual machine/directory/branch/commit observations persist with exact mission provenance\n");
 
+    const writers=new PostgresFilesystemWriterStore(pool,f.runtime),preflight=new WindowsLeasedWorktreeObserver(writers,store,options);
+    const leaseId=createStableId("lease");
+    if (leased) {
+      await f.workers.startRun(a.start);
+      await writers.reserve({ leaseId,runId:a.start.runId,workerProcessId:a.start.launchIntent.workerProcessId,
+        worktreeBindingId:tree.worktreeBindingId,provenanceId:a.a.packetProvenanceId });
+      const observed=await preflight.observe(leaseId,signal());
+      assert.equal(observed.state,"observed"); if (observed.state!=="observed") throw new Error("leased native preflight unavailable");
+      assert.equal(observed.leaseRevision,3); assert.equal(observed.headRevision,tree.headRevision); assert.equal(observed.branchRef,tree.branchRef);
+      assert.equal((await writers.load(leaseId))?.state,"active");
+      assert.equal((await pool.query("SELECT 1 FROM acp.worker_processes WHERE run_id=$1",[a.start.runId])).rowCount,0);
+      process.stdout.write("PASS leased native preflight: actual retained Windows identities and HEAD are bracketed by database renewals without launching a writer\n");
+      const cancelled=new AbortController(); cancelled.abort(); const beforePids=pids.size;
+      assert.deepEqual(await preflight.observe(leaseId,cancelled.signal),{ state:"unconfirmed" });
+      assert.equal(pids.size,beforePids); assert.equal((await writers.load(leaseId))?.revision,3);
+      process.stdout.write("PASS leased native preflight: pre-abort starts no helper and changes no lease history\n");
+      const abortNative=new AbortController();
+      const aborting=new WindowsLeasedWorktreeObserver(writers,store,{ ...options,onSpawn:(pid,purpose) => { report(pid,purpose); abortNative.abort(); } });
+      assert.deepEqual(await aborting.observe(leaseId,abortNative.signal),{ state:"unconfirmed" });
+      assert.equal(abortNative.signal.aborted,true); assert.ok(pids.size>beforePids);
+      assert.equal((await writers.load(leaseId))?.releasedAt,null);
+      process.stdout.write("PASS leased native preflight: cancellation after real helper spawn awaits closure and retains exclusion\n");
+      await git("-C",workspace,"-c","user.name=ACP synthetic test","-c","user.email=acp@example.invalid","commit","--allow-empty","-m","Retained HEAD drift fixture");
+      assert.deepEqual(await preflight.observe(leaseId,signal()),{ state:"unconfirmed" });
+      assert.deepEqual(await store.loadWorktree(tree.worktreeBindingId),{ binding:tree,retired:false });
+      assert.equal((await writers.load(leaseId))?.releasedAt,null);
+      process.stdout.write("PASS leased native preflight: real HEAD drift withholds observation without rewriting binding history or releasing exclusion\n");
+    }
+
     assert.equal((await pool.query("SELECT 1 FROM acp.resource_leases WHERE mission_id=$1",[a.a.missionId])).rowCount,0);
-    assert.equal((await pool.query("SELECT 1 FROM acp.worker_runs WHERE mission_id=$1",[a.a.missionId])).rowCount,0);
+    assert.equal((await pool.query("SELECT 1 FROM acp.worker_runs WHERE mission_id=$1",[a.a.missionId])).rowCount,leased ? 1 : 0);
     await rename(checkout,join(root,"retained-checkout")); await mkdir(checkout);
     assert.deepEqual(await observeWindowsWorktree(loaded.binding,workspace,signal(),options),{ state:"unconfirmed" });
     assert.deepEqual(await store.loadWorktree(tree.worktreeBindingId),{ binding:tree,retired:false });
@@ -66,6 +101,13 @@ export async function runNativeFilesystemBindings(pool: Pool) {
     await store.retireWorktree(tree.worktreeBindingId,await provenance(),"Disposable native observation ended.");
     await store.retireRepository(repository.repositoryBindingId,await provenance(),"Disposable native observation ended.");
     assert.equal((await store.loadWorktree(tree.worktreeBindingId))?.retired,true);
+    if (leased) {
+      const beforePids=pids.size;
+      assert.deepEqual(await preflight.observe(leaseId,signal()),{ state:"unconfirmed" });
+      assert.equal(pids.size,beforePids); assert.equal((await writers.load(leaseId))?.state,"recovering");
+      assert.equal((await pool.query("SELECT 1 FROM acp.filesystem_writer_releases WHERE lease_id=$1",[leaseId])).rowCount,0);
+      process.stdout.write("PASS leased native preflight: retired binding remains excluded and cannot start another observer\nLeased native preflight integration: 5 checks passed.\n");
+    }
     assert.deepEqual(await store.recordRepository(repository),repository);
     await f.dispatches.closeRuntime(f.runtime.hostIdentifier,f.runtime.sessionId);
     process.stdout.write("PASS native filesystem binding: retirement preserves exact readback after physical observation ends\nNative filesystem binding integration: 3 checks passed.\n");

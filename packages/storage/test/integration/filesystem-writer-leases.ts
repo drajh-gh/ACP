@@ -258,4 +258,8 @@ try {
     assert.equal((await store.reserve(x.reservation)).state,"active");
   });
   process.stdout.write(`Filesystem writer lease integration: ${checks} checks passed.\n`);
+  if (process.argv[3] === "native") {
+    const { runNativeFilesystemBindings } = await import("./filesystem-native-bindings.ts");
+    await runNativeFilesystemBindings(pool,true);
+  }
 } finally { await pool.end(); }
