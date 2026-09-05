@@ -92,6 +92,36 @@ snapshot/event read confirms no further renewal and the retained binding is
 unchanged. These tests cover first-epoch authority, not real-database periodic
 renewal, live model execution, or candidate-HEAD validation.
 
+The separate `periodic-cancel` phase now extends the real-database evidence.
+A model-free root and detached child append small synchronous records to fixed
+files inside the registered disposable workspace. The test holds the fourth
+controller heartbeat before its real SQL call: reaching that point demonstrates
+that initial admission plus two periodic database/native acknowledgements
+completed. It observes both files grow, commits and reads back an exact durable
+workflow cancellation intent, then releases the held call. PostgreSQL rejects
+that fresh heartbeat; there are four serial attempts, three actual COMMITs and
+no fourth renewal event. No caller abort or manual termination causes the tested
+stop. This is cancellation-intent enforcement, not a running DBOS workflow's
+cancellation or terminal mission projection.
+
+Controller-quiescent closure must report failed, terminated, empty and sealed
+ownership. Both files remain byte-identical across a later observation before
+the stop receipt, and again after result/release. Writes need not stop at the
+instant of cancellation COMMIT; the established boundary is confirmed native
+tree stop. The fixture also denies terminal-result persistence before the actual
+sealed stop, persists a cancelled result afterward, and checks the explicit
+release's separate revision increment without further renewal. This does not
+connect the standalone identity pins or prove a restricted filesystem boundary.
+
+The descendant waits for the root to publish its bounded PID manifest before
+writing. A pending file is renamed into place atomically. The parent reads and
+reports the exact child PID both during readiness and cleanup, independent of
+runner stdout. The outer gate can also read that exact manifest after hard child
+timeout; missing diagnostics stay explicitly missing. Manifest PIDs never grant
+termination authority: the kernel-owned job supplies tree cleanup. Each synthetic
+process has an independent 15-second runaway bound; the test requires the real
+cancellation rejection and native stop rather than inferring them from that timer.
+
 Each scenario has a 30-second child bound inside the unchanged 90-second outer
 job. The focused gate applies the same seeded schema through migration 0014 but
 does not rerun unrelated predecessor suites. The outer gate allocates and names

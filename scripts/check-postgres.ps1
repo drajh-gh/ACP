@@ -8,7 +8,7 @@ param(
   [switch]$FilesystemNative,
   [switch]$FilesystemLeases,
   [switch]$FilesystemLeaseNative,
-  [ValidateSet('initial', 'lost-ack')]
+  [ValidateSet('initial', 'lost-ack', 'periodic-cancel')]
   [string]$FilesystemLeaseChannelNative,
   [switch]$MigrationSessions,
   [Parameter(DontShow)]
@@ -164,6 +164,7 @@ if (-not $Internal) {
     }
     } finally {
       if ($null -ne $channelRoot -and (Test-Path -LiteralPath $channelRoot)) {
+        if ($FilesystemLeaseChannelNative -eq 'periodic-cancel') { Write-AcpNativeWriterDiagnostics $outerRunId }
         if ($ownedTreeStopped) { Remove-AcpNativeChannelFixture $outerRunId $true }
         elseif ($null -eq $integrationProcess) { Remove-Item -LiteralPath $channelRoot } # Only the empty prelaunch directory.
         else { throw "Owned native fixture preserved without empty-job proof: $channelRoot" }

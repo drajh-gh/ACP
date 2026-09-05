@@ -105,6 +105,7 @@ pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery 
 pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery -FilesystemBindings -FilesystemNative
 pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery -FilesystemBindings -FilesystemLeases -FilesystemLeaseChannelNative initial
 pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery -FilesystemBindings -FilesystemLeases -FilesystemLeaseChannelNative lost-ack
+pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery -FilesystemBindings -FilesystemLeases -FilesystemLeaseChannelNative periodic-cancel
 npm run test:dbos-recovery
 npm run test:worker-supervision
 pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite launch-fence
@@ -179,12 +180,15 @@ The `filesystem-pins` suite checks retained directory/pointer ownership while
 ordinary Git content updates remain possible. It also demonstrates that optional
 routing-file absence is not reserved and verifies eventual cleanup on pin-holder
 death, not writer-stop ordering. See [the standalone pin contract](docs/architecture/0014-linked-worktree-identity-pins.md).
-The two `FilesystemLeaseChannelNative` phases are focused, model-free real
+The three `FilesystemLeaseChannelNative` phases are focused, model-free real
 database/native lifecycle checks. Each applies the seeded schema through 0014,
 then runs only its selected scenario; predecessor suites remain separate gates.
 They use actual process journals and explicit stop/result/release ordering,
 including injected loss of a real COMMIT response. They do not enable delivery
-or prove filesystem isolation. Run all heavy gates sequentially. The outer gate
+or prove filesystem isolation. The `periodic-cancel` phase also proves three
+renewals, actual root/descendant workspace writes, rejection of the next real
+heartbeat after durable cancellation, and stable files after native tree stop.
+It does not run a DBOS cancellation workflow or a live model. Run all heavy gates sequentially. The outer gate
 owns their exact temporary directory and deletes it only after the entire job is
 empty; `check-native-fixture-cleanup.ps1` verifies the detached-child boundary.
 The `-LifecycleOnly` variant skips the host/DBOS/native suite for a narrower
