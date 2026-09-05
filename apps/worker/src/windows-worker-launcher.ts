@@ -7,6 +7,7 @@ import { parseStableId, type StableId } from "@acp/domain";
 import { minimalCodexEnvironment } from "./codex-sdk-transport.ts";
 import { WorkerTerminationUnconfirmedError } from "./worker-manager.ts";
 import type { WindowsSupervisionScope } from "@acp/storage";
+import type { WindowsLaunchFenceDescriptor } from "./windows-launch-fence.ts";
 
 export interface OwnedWorkerExit {
   readonly treeEmpty: true;
@@ -30,6 +31,8 @@ export interface WorkerLaunchRequest {
   readonly workspace: string;
   readonly maximumOutputBytes: number;
   readonly signal: AbortSignal;
+  /** Must first be bound to a durable launch intent; legacy callers omit it. */
+  readonly launchFence?: WindowsLaunchFenceDescriptor;
 }
 export interface WorkerLauncher { launch(request: WorkerLaunchRequest): Promise<OwnedWorker>; }
 export interface WindowsWorkerLauncherOptions {
@@ -143,6 +146,7 @@ export class WindowsWorkerLauncher implements WorkerLauncher {
       executable: process.execPath, arguments: ["--experimental-strip-types",
         this.options.runnerPath ?? fileURLToPath(new URL("./codex-sdk-runner.ts", import.meta.url))],
       workspace: request.workspace, maximumOutputBytes: request.maximumOutputBytes,
+      ...(request.launchFence === undefined ? {} : { launchFence: request.launchFence }),
       environment: Object.entries(environment).map(([key, value]) => `${key}=${value}`) });
     try {
       const identity = await ready.promise;

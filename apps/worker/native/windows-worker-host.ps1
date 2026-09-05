@@ -4,6 +4,7 @@ $ProgressPreference = 'SilentlyContinue'
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 function Send-AcpFrame($value) { [Console]::Out.WriteLine(($value | ConvertTo-Json -Compress -Depth 8)); [Console]::Out.Flush() }
 $workerJob = $null
+$launchFence = $null
 $controlReader = [IO.StreamReader]::new([Console]::OpenStandardInput(), [Text.UTF8Encoding]::new($false))
 $phase = 'read-launch'
 try {
@@ -23,9 +24,24 @@ try {
   $phase = 'read-os-scope'
   . (Join-Path $PSScriptRoot 'windows-worker-scope.ps1')
   $scope = Get-AcpWindowsWorkerScope
+  if ($launch.ContainsKey('launchFence')) {
+    $phase = 'lock-launch-fence'
+    Add-Type -Path (Join-Path $PSScriptRoot 'WindowsLaunchFence.cs')
+    $expected = $launch.launchFence
+    $expectedBoot = ([DateTimeOffset]$expected.scope.bootedAt).ToUniversalTime().ToString('O')
+    if ($expected.scope.machineFingerprint -cne $scope.machineFingerprint -or
+        ([DateTimeOffset]$expectedBoot) -ne ([DateTimeOffset]$scope.bootedAt) -or $expected.scope.sessionId -ne $scope.sessionId) { throw 'Launch scope mismatch' }
+    $launchFence = [Acp.Worker.WindowsLaunchFence]::Open($expected.directory, $expected.directoryIdentity, $launch.workerProcessId,
+      $scope.machineFingerprint, $expectedBoot, $scope.sessionId, 1000)
+    $launchFence.Begin()
+  }
   $phase = 'create-owned-root'
   $workerJob = [Acp.Worker.WindowsWorkerJob]::Create(('Local\ACP.Worker.' + $launch.workerProcessId),
     $launch.executable, [string[]]$launch.arguments, $launch.workspace, [string[]]$launch.environment, $deadline)
+  if ($null -ne $launchFence) {
+    $launchFence.RecordRoot($workerJob.ProcessId, $workerJob.ProcessStartToken, $workerJob.StartedAt)
+    $launchFence.Dispose(); $launchFence = $null
+  }
   Send-AcpFrame @{ type = 'ready'; processId = $workerJob.ProcessId; processStartToken = $workerJob.ProcessStartToken; startedAt = $workerJob.StartedAt; scope = $scope }
   $phase = 'control-loop'
   # Console.In is a synchronized TextReader whose async methods may block the
@@ -51,7 +67,13 @@ try {
         if ($command.type -eq 'stop') { $stopRequested = $true }
         elseif ($command.type -eq 'go' -and -not $released -and -not $stopRequested) {
           $released = $true
-          $workerJob.Resume()
+          if ($launch.ContainsKey('launchFence')) {
+            $launchFence = [Acp.Worker.WindowsLaunchFence]::Open($expected.directory, $expected.directoryIdentity, $launch.workerProcessId,
+              $scope.machineFingerprint, $expectedBoot, $scope.sessionId, 1000)
+            $launchFence.RequireRoot($workerJob.ProcessId, $workerJob.ProcessStartToken)
+          }
+          try { $workerJob.Resume() }
+          finally { if ($null -ne $launchFence) { $launchFence.Dispose(); $launchFence = $null } }
           $inputBytes = [Text.Encoding]::UTF8.GetBytes($command.input + "`n")
           $inputDelivery = $workerJob.BeginInput($inputBytes)
         } else { throw 'Invalid control transition' }
@@ -107,6 +129,7 @@ try {
     errorCode = $_.Exception.HResult; scriptLine = $_.InvocationInfo.ScriptLineNumber }
   exit 1
 } finally {
+  if ($null -ne $launchFence) { $launchFence.Dispose() }
   if ($null -ne $workerJob) { $workerJob.Dispose() }
   $controlReader.Dispose()
 }

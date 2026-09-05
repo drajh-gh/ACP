@@ -6,3 +6,4 @@ import "./worker-manager.test.ts";
 import "./host-dispatch.test.ts";
 import "./supervised-worker-transport.test.ts";
 import "./worker-recovery.test.ts";
+import "./windows-launch-fence.test.ts";

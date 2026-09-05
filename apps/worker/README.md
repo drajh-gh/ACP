@@ -131,6 +131,34 @@ journal stays pending even after a local handoff request; a later exact journal
 can make the retry eligible. Cross-boot/session recovery, Linux/systemd supervision, authenticated
 live Codex execution, and live sandbox-write denial are not yet proved.
 
+## Native launch fence prerequisite
+
+The opt-in `WorkerLaunchRequest.launchFence` adds a persistent native fence for
+future durable launch-intent recovery. `describeWindowsLaunchFence` reads the
+identity of a configured, existing local directory and the current OS scope.
+The descriptor pins its canonical path, volume/directory file identity, machine,
+boot and Windows session. This helper does not create the directory or grant
+execution authority. Embedders must use a dedicated, persistent, non-synced
+directory outside repository/worktree and model-writable boundaries.
+
+An exclusive file named for the immutable process ID flushes a consumed marker
+before CreateProcess and appends exact PID/FILETIME identity before reporting
+ready. Both creation and resume use that same exclusive lock. Sealing appends
+and flushes a permanent tombstone before observing or stopping the job. Even a
+late/recreated bridge cannot create or resume after the seal. A seal with no
+recorded root can prove only an absent/empty job, never kill an unidentified one.
+An occupied file, malformed/partial record, directory identity change, wrong
+scope, reparse point or hard link stays unconfirmed. Handles anchor the root and
+every ancestor against namespace replacement while acting.
+
+Never truncate, delete, relocate or restore seal files as ordinary cleanup.
+They fence potentially delayed launchers; losing that history can reopen an
+old identity. Storage failure fails closed. This is trusted-host process-lifetime
+coordination, not a security boundary against a hostile same-user administrator.
+Database launch-intent admission, revocation and no-journal result projection
+remain a separate unfinished integration. Existing consumers do not yet pass
+this option; a native seal alone must not be used to terminalize historical runs.
+
 ## Verification
 
 `scripts/check-postgres.ps1` applies all ten ACP migrations, tests real DBOS
@@ -148,6 +176,12 @@ fabricated process identities, not native process-stop evidence.
 `npm run test:worker-supervision` separately tests native process-tree ownership,
 deadlines, daemon loss, blocked pipes, exact recovery, namespace/identity denial,
 and aborted-inspector cleanup without model credentials or a database.
+`pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite launch-fence`
+separately tests permanent creation/resume fencing, consumed-ID replay, a real
+killed helper between CreateProcess and root journaling, exact unjournaled tree
+stop, Unicode paths, scope/directory substitution, partial records and hard links.
+It removes only its owned temporary seal fixtures after their actors exit;
+production seals are retained. The suite has independent 70/90-second bounds.
 Local tests exercise queue/message identity, TTL cadence/watchdog, cancellation,
 shutdown failure, journal-before-release, lost acknowledgements, and replay. The separate
 `scripts/check-dbos-recovery.ps1` proves DBOS checkpoint recovery with its own

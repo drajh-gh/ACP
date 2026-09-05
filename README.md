@@ -59,6 +59,8 @@ deployed autonomous service.
   exact per-process claims, fresh runtime provenance, and projection repair after
   owner retirement or an explicit single-run handoff; ambiguous or unjournaled
   launches remain pending, and handoff fences late owner writes
+- an opt-in persistent native creation/resume seal for the next launch-intent
+  recovery slice; database intent/revocation wiring is still unfinished
 - an authenticated, Origin-checked, trusted-proxy-aware, version-negotiated,
   size-bounded Streamable HTTP MCP control surface for
   idempotent mission creation, exact mission status, and bounded active-mission
@@ -84,6 +86,7 @@ pwsh -NoProfile -File scripts/check-postgres.ps1
 pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly
 npm run test:dbos-recovery
 npm run test:worker-supervision
+pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite launch-fence
 ```
 
 The PostgreSQL invariant fixture is at

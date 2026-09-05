@@ -1,13 +1,13 @@
-param([switch]$Internal)
+param([switch]$Internal, [ValidateSet('supervision', 'launch-fence')][string]$Suite = 'supervision')
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 if (-not $Internal) {
   Add-Type -Path (Join-Path $PSScriptRoot 'WindowsKillOnCloseJob.cs')
   $pwshPath = (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source
   $ownedGate = [Acp.Integration.WindowsKillOnCloseJob]::Start($pwshPath,
-    ('"{0}" -NoProfile -File "{1}" -Internal' -f $pwshPath, $PSCommandPath), $repositoryRoot)
+    ('"{0}" -NoProfile -File "{1}" -Internal -Suite {2}' -f $pwshPath, $PSCommandPath, $Suite), $repositoryRoot)
   try {
-    Write-Output "Owned PID $($ownedGate.ProcessId): Windows supervision integration (90-second limit)"
+    Write-Output "Owned PID $($ownedGate.ProcessId): Windows $Suite integration (90-second limit)"
     if (-not $ownedGate.WaitForExit(90000)) { throw 'Worker supervision integration timed out' }
     if ($ownedGate.GetExitCode() -ne 0) { throw 'Worker supervision integration failed' }
   } finally {
@@ -25,8 +25,8 @@ $testInfo.UseShellExecute = $false
 $testInfo.CreateNoWindow = $true
 $testInfo.RedirectStandardOutput = $true
 $testInfo.RedirectStandardError = $true
-foreach ($argument in @('--experimental-strip-types', '--test', '--test-concurrency=1', '--test-reporter=spec',
-  'apps/worker/test/integration/windows-worker.test.ts')) { $testInfo.ArgumentList.Add($argument) }
+$testFile = if ($Suite -eq 'launch-fence') { 'apps/worker/test/integration/windows-launch-fence.test.ts' } else { 'apps/worker/test/integration/windows-worker.test.ts' }
+foreach ($argument in @('--experimental-strip-types', '--test', '--test-concurrency=1', '--test-reporter=spec', $testFile)) { $testInfo.ArgumentList.Add($argument) }
 $testProcess = [Diagnostics.Process]::Start($testInfo)
 $testOutput = $testProcess.StandardOutput.ReadToEndAsync()
 $testError = $testProcess.StandardError.ReadToEndAsync()

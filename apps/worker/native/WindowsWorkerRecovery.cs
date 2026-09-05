@@ -16,6 +16,23 @@ public sealed class WindowsRecoveryObservation
 
 public static class WindowsWorkerRecovery
 {
+    // Caller must hold the exact persistent launch fence, already flushed as
+    // sealed. This method never terminates a job with an unrecorded root.
+    public static WindowsRecoveryObservation ObserveSealedUnjournaled(string name)
+    {
+        IntPtr job = OpenJobObject(0x0004, false, name);
+        int error = job == IntPtr.Zero ? Marshal.GetLastWin32Error() : 0;
+        try
+        {
+            if (job == IntPtr.Zero && error == 2)
+                return new WindowsRecoveryObservation { State = "lost", Reason = "sealed_launch_job_absent" };
+            if (job != IntPtr.Zero && Active(job) == 0)
+                return new WindowsRecoveryObservation { State = "lost", Reason = "sealed_launch_job_empty" };
+            return new WindowsRecoveryObservation();
+        }
+        finally { if (job != IntPtr.Zero) CloseHandle(job); }
+    }
+
     public static WindowsRecoveryObservation Stop(string name, int pid, string token,
         string expectedMachine, string expectedBoot, int expectedSession, WindowsWorkerScope actual, int timeoutMs)
     {
