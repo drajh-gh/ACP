@@ -100,10 +100,15 @@ pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery
 pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery -LaunchNative
 pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery -FilesystemBindings
 pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery -FilesystemBindings -FilesystemNative
+pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery -FilesystemBindings -FilesystemLeases -FilesystemLeaseChannelNative initial
+pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery -FilesystemBindings -FilesystemLeases -FilesystemLeaseChannelNative lost-ack
 npm run test:dbos-recovery
 npm run test:worker-supervision
 pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite launch-fence
 pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite filesystem
+pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite lease-channel
+pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite lease-channel-liveness
+pwsh -NoProfile -File scripts/check-native-fixture-cleanup.ps1
 ```
 
 The PostgreSQL invariant fixture is at
@@ -166,6 +171,14 @@ The `filesystem` suite uses disposable local Git repositories to test directory
 identity, pointer pinning, layout rejection, unchanged metadata and helper/tree
 cleanup. The observer grants no writer lease and is not an OS network sandbox;
 see [the filesystem binding contract](docs/architecture/0007-host-filesystem-bindings.md).
+The two `FilesystemLeaseChannelNative` phases are focused, model-free real
+database/native lifecycle checks. Each applies the seeded schema through 0014,
+then runs only its selected scenario; predecessor suites remain separate gates.
+They use actual process journals and explicit stop/result/release ordering,
+including injected loss of a real COMMIT response. They do not enable delivery
+or prove filesystem isolation. Run all heavy gates sequentially. The outer gate
+owns their exact temporary directory and deletes it only after the entire job is
+empty; `check-native-fixture-cleanup.ps1` verifies the detached-child boundary.
 The `-LifecycleOnly` variant skips the host/DBOS/native suite for a narrower
 lifecycle and synthetic handoff migration check. The full gate remains sequential, with a 90-second
 overall limit and a 45-second limit for the host suite.

@@ -8,6 +8,8 @@ param(
   [switch]$FilesystemNative,
   [switch]$FilesystemLeases,
   [switch]$FilesystemLeaseNative,
+  [ValidateSet('initial', 'lost-ack')]
+  [string]$FilesystemLeaseChannelNative,
   [switch]$MigrationSessions,
   [Parameter(DontShow)]
   [switch]$Internal,
@@ -23,7 +25,10 @@ if ($FilesystemBindings -and (-not $LifecycleOnly -or -not $LaunchRecovery -or $
 if ($FilesystemNative -and -not $FilesystemBindings) { throw 'FilesystemNative requires FilesystemBindings' }
 if ($FilesystemLeases -and (-not $FilesystemBindings -or $FilesystemNative)) { throw 'FilesystemLeases requires FilesystemBindings, without FilesystemNative' }
 if ($FilesystemLeaseNative -and -not $FilesystemLeases) { throw 'FilesystemLeaseNative requires FilesystemLeases' }
-if ($MigrationSessions -and ($LifecycleOnly -or $HostOnly -or $LaunchRecovery -or $LaunchNative -or $FilesystemBindings -or $FilesystemNative -or $FilesystemLeases -or $FilesystemLeaseNative)) { throw 'MigrationSessions is a standalone bounded gate' }
+if ($FilesystemLeaseChannelNative -and (-not $FilesystemLeases -or $FilesystemLeaseNative)) { throw 'FilesystemLeaseChannelNative requires FilesystemLeases, without FilesystemLeaseNative' }
+if ($MigrationSessions -and ($LifecycleOnly -or $HostOnly -or $LaunchRecovery -or $LaunchNative -or $FilesystemBindings -or $FilesystemNative -or $FilesystemLeases -or $FilesystemLeaseNative -or $FilesystemLeaseChannelNative)) { throw 'MigrationSessions is a standalone bounded gate' }
+
+. (Join-Path $PSScriptRoot 'native-channel-fixture.ps1')
 
 function Invoke-BoundedDocker {
   param(
@@ -97,10 +102,19 @@ if (-not $Internal) {
   if ($FilesystemNative) { $commandLine += ' -FilesystemNative' }
   if ($FilesystemLeases) { $commandLine += ' -FilesystemLeases' }
   if ($FilesystemLeaseNative) { $commandLine += ' -FilesystemLeaseNative' }
+  if ($FilesystemLeaseChannelNative) { $commandLine += ' -FilesystemLeaseChannelNative ' + $FilesystemLeaseChannelNative }
   if ($MigrationSessions) { $commandLine += ' -MigrationSessions' }
   $integrationProcess = $null
+  $channelRoot = $null
+  $ownedTreeStopped = $false
 
   try {
+    if ($FilesystemLeaseChannelNative) {
+      $pendingChannelRoot = Get-AcpNativeChannelRoot $outerRunId
+      New-Item -ItemType Directory -Path $pendingChannelRoot -ErrorAction Stop | Out-Null
+      $channelRoot = $pendingChannelRoot
+      Write-Host "Owned native channel fixture: $channelRoot"
+    }
     $integrationProcess = [Acp.Integration.WindowsKillOnCloseJob]::Start(
       $pwshCommand,
       $commandLine,
@@ -120,15 +134,19 @@ if (-not $Internal) {
     }
   }
   finally {
+    try {
     if ($null -ne $integrationProcess) {
       try {
         $integrationProcess.Terminate(0)
-        $integrationProcess.WaitForExit(5000) | Out-Null
+        $ownedTreeStopped = $integrationProcess.WaitForEmpty(5000)
+        if (-not $ownedTreeStopped) { throw 'Owned PostgreSQL integration job did not become empty' }
       }
       finally {
         $integrationProcess.Dispose()
       }
     }
+    } finally {
+    try {
     $inventory = Invoke-BoundedDocker @(
       'ps', '-aq', '--filter', "label=acp.integration.run=$outerRunId"
     )
@@ -143,6 +161,15 @@ if (-not $Internal) {
       if ($remaining.StandardOutput.Trim().Length -gt 0) {
         throw "Owned PostgreSQL integration container remains: $ownedContainerId"
       }
+    }
+    } finally {
+      if ($null -ne $channelRoot -and (Test-Path -LiteralPath $channelRoot)) {
+        if ($ownedTreeStopped) { Remove-AcpNativeChannelFixture $outerRunId $true }
+        elseif ($null -eq $integrationProcess) { Remove-Item -LiteralPath $channelRoot } # Only the empty prelaunch directory.
+        else { throw "Owned native fixture preserved without empty-job proof: $channelRoot" }
+        if (Test-Path -LiteralPath $channelRoot) { throw "Owned native fixture remains: $channelRoot" }
+      }
+    }
     }
   }
   return
@@ -277,8 +304,12 @@ try {
     $checkStartInfo.RedirectStandardError = $true
     $checkStartInfo.WorkingDirectory = $repositoryRoot
     if (($FilesystemNative -and $RelativePath -eq 'packages/storage/test/integration/filesystem-bindings.ts') -or
-        ($FilesystemLeaseNative -and $RelativePath -eq 'packages/storage/test/integration/filesystem-writer-leases.ts')) {
+        ($FilesystemLeaseNative -and $RelativePath -eq 'packages/storage/test/integration/filesystem-writer-leases.ts') -or
+        ($FilesystemLeaseChannelNative -and $RelativePath -eq 'packages/storage/test/integration/filesystem-native-channel.ts')) {
       $checkStartInfo.Environment['ACP_TEST_GIT'] = (Get-Command git -CommandType Application | Select-Object -First 1).Source
+    }
+    if ($FilesystemLeaseChannelNative -and $RelativePath -eq 'packages/storage/test/integration/filesystem-native-channel.ts') {
+      $checkStartInfo.Environment['ACP_TEST_NATIVE_CHANNEL_ROOT'] = Get-AcpNativeChannelRoot $RunId
     }
     foreach ($argument in @('--experimental-strip-types', $RelativePath, $checkPort)) {
       $checkStartInfo.ArgumentList.Add($argument)
@@ -307,6 +338,19 @@ try {
   if ($MigrationSessions) {
     Invoke-AcpNodeCheck 'packages/storage/test/integration/migration-sessions.ts' 'Migration session integration' -TimeoutSeconds 30
     Write-Host 'Migration session integration passed; removing only the owned disposable database container.'
+    return
+  }
+  if ($FilesystemLeaseChannelNative) {
+    # This gate tests one real native/database lifecycle, not every predecessor
+    # regression. Apply the same seeded schema directly; broader gates remain
+    # separate so their elapsed time cannot consume the native child's budget.
+    foreach ($migration in @('0006_host_dispatch.sql', '0007_supervised_workers.sql', '0008_worker_recovery.sql',
+        '0009_lifecycle_context.sql', '0010_worker_handoff.sql', '0011_worker_launch_intents.sql',
+        '0012_worker_launch_recovery.sql', '0013_filesystem_bindings.sql', '0014_filesystem_writer_leases.sql')) {
+      Invoke-AcpSqlFile ('packages/storage/migrations/' + $migration) ('Native channel prerequisite schema: ' + $migration)
+    }
+    Invoke-AcpNodeCheck 'packages/storage/test/integration/filesystem-native-channel.ts' 'Native writer channel integration' $FilesystemLeaseChannelNative -TimeoutSeconds 30
+    Write-Host 'Focused native writer channel scenario passed; predecessor suites are verified separately.'
     return
   }
   Invoke-AcpNodeCheck 'packages/storage/test/integration/context-store.ts' 'Authoritative context integration'

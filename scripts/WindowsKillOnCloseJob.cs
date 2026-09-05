@@ -1,7 +1,9 @@
 using System;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 
 namespace Acp.Integration;
 
@@ -132,6 +134,22 @@ public sealed class WindowsKillOnCloseJob : IDisposable
         return unchecked((int)exitCode);
     }
 
+    // Root exit alone is insufficient before removing an owned fixture tree.
+    public bool WaitForEmpty(int timeoutMilliseconds)
+    {
+        ThrowIfDisposed();
+        if (timeoutMilliseconds < 0 || timeoutMilliseconds > 60000) throw new ArgumentOutOfRangeException(nameof(timeoutMilliseconds));
+        var elapsed = Stopwatch.StartNew();
+        do
+        {
+            if (!QueryInformationJobObject(jobHandle, 1, out Accounting info, (uint)Marshal.SizeOf<Accounting>(), IntPtr.Zero))
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "QueryInformationJobObject failed");
+            if (info.ActiveProcesses == 0 && WaitForExit(0)) return true;
+            if (elapsed.ElapsedMilliseconds >= timeoutMilliseconds) return false;
+            Thread.Sleep(10);
+        } while (true);
+    }
+
     public void Terminate(int exitCode)
     {
         ThrowIfDisposed();
@@ -165,6 +183,13 @@ public sealed class WindowsKillOnCloseJob : IDisposable
     private void ThrowIfDisposed()
     {
         if (disposed) throw new ObjectDisposedException(nameof(WindowsKillOnCloseJob));
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Accounting
+    {
+        public long User, Kernel, PeriodUser, PeriodKernel;
+        public uint Faults, TotalProcesses, ActiveProcesses, TerminatedProcesses;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -244,6 +269,9 @@ public sealed class WindowsKillOnCloseJob : IDisposable
         int informationClass,
         IntPtr information,
         uint informationLength);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool QueryInformationJobObject(IntPtr job, int informationClass, out Accounting info, uint length, IntPtr returned);
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern bool CreateProcess(

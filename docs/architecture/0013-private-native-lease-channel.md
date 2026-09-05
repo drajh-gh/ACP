@@ -71,11 +71,37 @@ The existing 100-check PostgreSQL/native gate additionally verifies the new
 real metadata join, exact original-owner filtering, no renewal from readback,
 and denial after expiry, retirement, handoff, stop or release. Its native
 observer remains read-only. These two evidence sets do not yet establish a
-single real PostgreSQL-to-native writer lifecycle.
+single real PostgreSQL-to-native writer lifecycle by themselves.
 
-The next gate must combine actual admitted intent/lease, actual process journal
-before GO, fresh committed heartbeats, native closure and quiescence, then
-durable stop/result/release in disposable fixtures. Native continuous path pins,
+The subsequent dedicated `filesystem-native-channel.ts` fixture combines the
+real path in two independently selected scenarios. Both use actual observed
+Unicode repository/worktree paths, an admitted intent, a reserved lease, and the
+returned native PID/start token/time/scope journalled before public release.
+The initial-epoch case returns a model-free structured **failure** result through
+a normally exited native process; it does not claim a successful delivery or
+actual worktree mutation. The loss case lets PostgreSQL complete a heartbeat
+COMMIT, then discards its response before the store receives it. A separate
+revision/event read proves the commit persisted, while no GO/output is accepted.
+This is injected COMMIT-response loss, not a real network fault.
+
+After controller-quiescent closure, assertions confirm no automatic stop,
+terminal result or release writes. Exact native stop evidence is then persisted;
+lease release remains forbidden until the terminal result is independently read
+back. Release itself increments the revision, but adds no heartbeat. A later
+snapshot/event read confirms no further renewal and the retained binding is
+unchanged. These tests cover first-epoch authority, not real-database periodic
+renewal, live model execution, or candidate-HEAD validation.
+
+Each scenario has a 30-second child bound inside the unchanged 90-second outer
+job. The focused gate applies the same seeded schema through migration 0014 but
+does not rerun unrelated predecessor suites. The outer gate allocates and names
+the exact temporary fixture directory, then removes it only after job accounting
+is empty and the root process is signalled. This also handles hard timeout,
+which bypasses child `finally`. No empty-job evidence means the fixture is
+preserved. Two cleanup probes cover forced stop and an exited root with a live
+detached descendant; root exit alone cannot permit removal.
+
+Native continuous path pins,
 restricted filesystem access, provisioning reservations, recovery and delivery
 transport admission remain separate prerequisites. No credentials, model calls,
 production deployment, external writes or automatic lease release are introduced.
