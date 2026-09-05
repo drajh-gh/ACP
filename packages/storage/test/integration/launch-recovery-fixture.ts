@@ -5,11 +5,11 @@ import { PostgresContextStore, PostgresDispatchStore, PostgresWorkerRuntimeStore
   type WorkerProcessRegistration, type WindowsLaunchFenceDescriptor } from "../../src/index.ts";
 
 /** Synthetic authority/process fixture. Native callers replace the root explicitly. */
-export async function launchRecoveryFixture(pool: Pool) {
+export async function launchRecoveryFixture(pool: Pool, hostIdentifier = "host:launch-recovery-check") {
   const contexts = new PostgresContextStore(pool), dispatches = new PostgresDispatchStore(pool), workers = new PostgresWorkerRuntimeStore(pool);
   const legacy = (prefix: string) => `${prefix}_00000000-0000-4000-8000-000000000001`;
   const profile = createStableId("projectProfile"), binding = createStableId("workflowBinding"), template = createStableId("provenance");
-  const hostIdentifier = "host:launch-recovery-check", applicationVersion = "launch-recovery-v1";
+  const applicationVersion = "launch-recovery-v1";
   const host = { hostIdentifier, hostKind: "vps" as const, state: "active" as const, maximumCpuIntensive: 1, maximumModerateCompute: 1,
     maximumLightweightRead: 32, maximumNetworkBound: 1, heartbeatTtlSeconds: 300, provenanceId: template, transitionProvenanceId: template };
   let runtime = { hostIdentifier, applicationVersion, sessionId: createStableId("workerHostSession"),
@@ -26,14 +26,15 @@ export async function launchRecoveryFixture(pool: Pool) {
   await clone("runtime_provenance", "provenance_id", legacy("prv"), { provenance_id: template, workflow_binding_id: binding,
     project_profile_id: profile, host_identifier: hostIdentifier, database_schema_version: "0012" });
   await dispatches.registerRuntime(runtime, host);
-  async function sample(journal = false, fence = syntheticFence) {
+  async function assignment(fence = syntheticFence, workspace?: string) {
     const missionId = createStableId("mission"), nodeId = createStableId("node"), grantId = createStableId("capabilityGrant");
     await clone("missions", "mission_id", legacy("mis"), { mission_id: missionId, workflow_binding_id: binding, state: "executing",
       requested_scope: "Synthetic launch recovery.", completed_by_evaluation_id: null, transition_provenance_id: template });
     await clone("mission_nodes", "node_id", legacy("nod"), { node_id: nodeId, mission_id: missionId, state: "runnable", dependencies: [],
       graph_revision: "launch-recovery-check", started_at: null, completed_at: null, provenance_id: template, transition_provenance_id: template });
     const evaluation = createStableId("capabilityGrantEvaluation"), fields = { mission_id: missionId, node_id: nodeId, provenance_id: template,
-      valid_from: "2000-01-01", expires_at: "2099-01-01", maximum_attempts: 3 };
+      valid_from: "2000-01-01", expires_at: "2099-01-01", maximum_attempts: 3,
+      ...(workspace === undefined ? {} : { workspace }) };
     await clone("capability_grant_evaluations", "evaluation_id", legacy("cge"), { ...fields, evaluation_id: evaluation });
     await clone("capability_grants", "grant_id", legacy("cgr"), { ...fields, grant_id: grantId, evaluation_id: evaluation });
     await contexts.publishNodeContext({ contextRevisionId: createStableId("nodeContextRevision"), missionId, nodeId, expectedRevision: 0,
@@ -55,6 +56,11 @@ export async function launchRecoveryFixture(pool: Pool) {
       launchIntent: { workerProcessId, fence }, request: { missionId, nodeId, projectId: packet.projectId, role: packet.workerRole,
         resourceClass: grant.resourceClass, operation: a.operation, resource: a.resource, mode: grant.mode, workspace: grant.workspace,
         networkAccess: "none" as const, at: new Date().toISOString() } };
+    return { a, packet, start, message };
+  }
+  async function sample(journal = false, fence = syntheticFence, workspace?: string) {
+    const { a, packet, start, message } = await assignment(fence, workspace);
+    const { runId } = start, { workerProcessId } = start.launchIntent;
     const started = await workers.startRun(start);
     const registration: WorkerProcessRegistration = { workerProcessId, runId, processId: ++processId, processStartToken: "win32-filetime:134329999999999999",
       startedAt: new Date(Date.parse(started.startedAt) + 1).toISOString(), purpose: "Synthetic launch recovery; no OS process",
@@ -79,6 +85,6 @@ export async function launchRecoveryFixture(pool: Pool) {
     runtime = { ...runtime, sessionId: createStableId("workerHostSession") };
     await dispatches.registerRuntime(runtime, host); launches = new PostgresWorkerLaunchStore(pool, runtime);
   }
-  return { contexts, dispatches, workers, host, template, binding, clone, sample, replaceOwner,
+  return { contexts, dispatches, workers, host, template, binding, clone, assignment, sample, replaceOwner,
     get runtime() { return runtime; }, get launches() { return launches; } };
 }

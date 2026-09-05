@@ -1186,6 +1186,7 @@ export class PostgresWorkerRuntimeStore implements WorkerRunPersistence {
         FROM acp.worker_runs r JOIN acp.context_packets p USING (context_packet_id)
         JOIN acp.missions m ON m.mission_id = r.mission_id JOIN acp.mission_nodes n ON n.node_id = r.node_id
         WHERE r.run_id = $1 AND acp.worker_run_recovery_eligible(r.run_id)
+          AND to_jsonb(r) ->> 'launch_worker_process_id' IS NULL
           AND acp.worker_recovery_runtime_live(r.run_id, $2, $3::acp.stable_id, $4)
           AND EXISTS (SELECT 1 FROM acp.worker_processes wp WHERE wp.run_id = r.run_id AND wp.supervision_kind = 'windows_job' AND wp.state <> 'running')
           AND NOT EXISTS (SELECT 1 FROM acp.worker_processes wp WHERE wp.run_id = r.run_id AND wp.state = 'running')`,

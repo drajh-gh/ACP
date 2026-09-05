@@ -9,5 +9,6 @@ export * from "./host-dispatch.ts";
 export * from "./windows-worker-launcher.ts";
 export * from "./supervised-worker-transport.ts";
 export * from "./worker-recovery.ts";
+export * from "./worker-launch-recovery.ts";
 export * from "./windows-launch-fence.ts";
 export * from "./windows-worker-recovery.ts";

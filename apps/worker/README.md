@@ -46,7 +46,8 @@ For a Windows 10+ host with PowerShell 7, embed `SupervisedWorkerTransport` with
 a `WindowsWorkerLauncher` and the same `PostgresWorkerRuntimeStore` used by the
 manager. Supervision requires schema 0008; schema 0009 supplies the current
 lifecycle-aware packet producer and schema 0010 is required by the recovery
-stores and current-owner handoff. The direct `CodexSdkWorkerTransport` remains
+stores and current-owner handoff. Opt-in durable launch mode requires schema
+0012 and the paired fence/receipt-store configuration below. The direct `CodexSdkWorkerTransport` remains
 the trusted child implementation; it is not itself a process supervisor.
 
 The native bridge creates a hidden, suspended Node runner already assigned to
@@ -126,15 +127,15 @@ recovery. Lost handoff acknowledgements and missing journals enter a bounded
 fences the daemon and stops lease renewal rather than discarding uncertainty.
 The queue is local; a daemon crash uses the existing retired-owner recovery path.
 
-Unjournaled launch gaps still need durable launch-intent recovery. A missing
-journal stays pending even after a local handoff request; a later exact journal
-can make the retry eligible. Cross-boot/session recovery, Linux/systemd supervision, authenticated
+Legacy unjournaled launch gaps remain pending; legacy runs are never retrofitted
+with invented intents. In opt-in launch mode, an exact admitted intent can be
+sealed and recovered even without a journal. Cross-boot/session recovery, Linux/systemd supervision, authenticated
 live Codex execution, and live sandbox-write denial are not yet proved.
 
-## Native launch fence prerequisite
+## Durable Windows launch intents
 
-The opt-in `WorkerLaunchRequest.launchFence` adds a persistent native fence for
-future durable launch-intent recovery. `describeWindowsLaunchFence` reads the
+The opt-in `WorkerLaunchRequest.launchFence` supplies the persistent native fence
+for durable launch-intent recovery. `describeWindowsLaunchFence` reads the
 identity of a configured, existing local directory and the current OS scope.
 The descriptor pins its canonical path, volume/directory file identity, machine,
 boot and Windows session. This helper does not create the directory or grant
@@ -168,8 +169,39 @@ and durable no-journal stop receipts through `PostgresWorkerLaunchStore`. Owner
 process completion and its sealed receipt are atomic; recovery holds one live
 database session through observation and receipt commit, without row locks over
 native I/O. Lost acquisition acknowledgements destroy the uncertain session.
-Existing consumers do not yet pass this option; a native seal alone
-must not be used to terminalize historical runs.
+Configure both `SupervisedWorkerTransport.launchFence` and `launches`; incomplete
+configuration fails at construction. The manager reserves one process ID in the
+same transaction as run admission and checks exact persisted readback before
+launch. Lost admission acknowledgement, prelaunch abort or uncertain creation
+stays pending until recovery seals the intent. The transport uses only that
+process ID, journals before release, and atomically records sealed owner closure
+before returning a result. It strips launch-directory metadata from child IPC.
+A native seal alone must not be used to terminalize historical runs.
+
+For an already-configured bounded pool, current runtime and worker store:
+
+```ts
+const fence = await describeWindowsLaunchFence(trustedSealDirectory, signal);
+const launches = new PostgresWorkerLaunchStore(pool, runtime);
+const transport = new SupervisedWorkerTransport({
+  launcher: new WindowsWorkerLauncher(), processes: workers,
+  launchFence: fence, launches,
+});
+const recovery = new WorkerRecoveryRuntime({
+  store: new PostgresWorkerRecoveryStore(pool, runtime), workers,
+  inspector: new WindowsWorkerTreeInspector(),
+  launches: new WorkerLaunchRecoveryRuntime({
+    store: launches, inspector: new WindowsWorkerLaunchInspector(),
+  }),
+});
+```
+
+Pass this transport to the manager and recovery to the host consumer. The two
+recovery lanes alternate whole maintenance passes, preserving the total bound of
+two observations per pass; each advances its own cursor across poisoned items.
+All three runtime identities must match. A committed owner receipt survives
+handoff/replacement and requires no fresh native I/O, only fresh projection
+provenance. Terminal winners remain unchanged; recovery never infers success.
 
 Migration 0012 cannot be removed while an intent is unresolved, or when a
 no-journal stop receipt is the only independent stop proof for historical work.
@@ -199,6 +231,12 @@ killed helper between CreateProcess and root journaling, exact unjournaled tree
 stop, Unicode paths, scope/directory substitution, partial records and hard links.
 It removes only its owned temporary seal fixtures after their actors exit;
 production seals are retained. The suite has independent 70/90-second bounds.
+`pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery -LaunchNative`
+combines schema 0012 with a synthetic native runner and the actual host/manager/
+transport path. It covers normal sealed closure, lost owner receipt ACK, delayed
+journal ACK across cancellation/handoff, lost admission ACK without creation,
+and a killed unjournaled owner recovered without duplicate execution or a fake
+journal. The native child gate is 45 seconds inside the 90-second overall bound.
 Local tests exercise queue/message identity, TTL cadence/watchdog, cancellation,
 shutdown failure, journal-before-release, lost acknowledgements, and replay. The separate
 `scripts/check-dbos-recovery.ps1` proves DBOS checkpoint recovery with its own

@@ -47,6 +47,7 @@ export class PostgresWorkerRecoveryStore {
     const result = await this.pool.query(`SELECT p.worker_process_id, p.run_id, p.state
       FROM acp.worker_processes p JOIN acp.worker_runs r USING (run_id)
       WHERE p.host_identifier = $1 AND r.state = 'started' AND p.supervision_kind = 'windows_job'
+        AND to_jsonb(r) ->> 'launch_worker_process_id' IS NULL
         AND acp.worker_run_recovery_eligible(r.run_id)
         AND ($2::text IS NULL OR p.worker_process_id::text > $2)
         AND (p.state <> 'running' OR ((p.deadline_at <= clock_timestamp()
@@ -76,6 +77,7 @@ export class PostgresWorkerRecoveryStore {
         JOIN acp.worker_host_runtimes h ON h.host_identifier = r.host_identifier AND h.workflow_binding_id = m.workflow_binding_id
         JOIN acp.runtime_provenance t ON t.provenance_id = h.template_provenance_id
         WHERE r.run_id = $2::acp.stable_id AND r.host_identifier = $3 AND r.state = 'started'
+          AND to_jsonb(r) ->> 'launch_worker_process_id' IS NULL
           AND h.session_id = $4::acp.stable_id AND h.application_version = $5
           AND acp.worker_run_recovery_eligible(r.run_id)
           AND acp.worker_recovery_runtime_live(r.run_id, $3, $4::acp.stable_id, $5)

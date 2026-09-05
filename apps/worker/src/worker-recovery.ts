@@ -1,6 +1,7 @@
 import type { StableId } from "@acp/domain";
 import type { DispatchMessage, PostgresWorkerRecoveryStore, PostgresWorkerRuntimeStore } from "@acp/storage";
 import type { WorkerTreeInspector } from "./windows-worker-recovery.ts";
+import type { WorkerLaunchRecoveryRuntime } from "./worker-launch-recovery.ts";
 
 export interface WorkerRecoverySweep {
   readonly recovered: number;
@@ -15,16 +16,28 @@ export class WorkerRecoveryRuntime {
   private readonly store: Pick<PostgresWorkerRecoveryStore, "authority" | "listCandidates" | "prepare" | "handoff">;
   private readonly workers: Pick<PostgresWorkerRuntimeStore, "reconcileClaimedWorkerProcess" | "recoverStoppedRun">;
   private readonly inspector: WorkerTreeInspector;
+  private readonly launches: Pick<WorkerLaunchRecoveryRuntime, "authority" | "maintain"> | undefined;
+  private launchTurn = true;
   constructor(options: { readonly store: WorkerRecoveryRuntime["store"]; readonly workers: WorkerRecoveryRuntime["workers"];
-    readonly inspector: WorkerTreeInspector }) {
+    readonly inspector: WorkerTreeInspector; readonly launches?: Pick<WorkerLaunchRecoveryRuntime, "authority" | "maintain"> }) {
     this.store = options.store; this.workers = options.workers; this.inspector = options.inspector;
+    this.launches = options.launches;
+    if (this.launches && (this.launches.authority.hostIdentifier !== this.authority.hostIdentifier
+      || this.launches.authority.sessionId !== this.authority.sessionId
+      || this.launches.authority.applicationVersion !== this.authority.applicationVersion)) throw new Error("launch recovery authority mismatch");
   }
   get authority() { return this.store.authority; }
   handoff(message: DispatchMessage) {
     return this.store.handoff(message);
   }
   maintain(signal: AbortSignal): Promise<WorkerRecoverySweep> {
-    this.inFlight ??= this.sweep(signal).finally(() => { this.inFlight = undefined; });
+    if (!this.inFlight) {
+      // Alternate whole passes: never double the two-observation CPU/time budget.
+      const launches = this.launches && this.launchTurn;
+      if (!signal.aborted && this.launches) this.launchTurn = !this.launchTurn;
+      this.inFlight = (launches ? this.launches!.maintain(signal) : this.sweep(signal))
+        .finally(() => { this.inFlight = undefined; });
+    }
     return this.inFlight;
   }
   private async sweep(signal: AbortSignal): Promise<WorkerRecoverySweep> {

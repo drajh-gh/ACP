@@ -2,6 +2,7 @@ import {
   assertWorkerResultContext,
   assessCapabilityGrant,
   createWorkerFailureResult,
+  createStableId,
   parseContextPacket,
   parseWorkerResult,
   type CapabilityGrant,
@@ -10,11 +11,12 @@ import {
   type StableId,
   type WorkerResult,
 } from "@acp/domain";
-import type { WorkerRunPersistence } from "@acp/storage";
+import { parseWindowsLaunchFence, parseWorkerLaunchIntent, type WorkerRunPersistence, type WorkerLaunchIntent,
+  type WindowsLaunchFenceDescriptor } from "@acp/storage";
 import { execFile } from "node:child_process";
 import { lstat, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
-import { promisify } from "node:util";
+import { promisify, isDeepStrictEqual } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
@@ -41,6 +43,7 @@ export interface WorkerTransportRequest {
     readonly hostIdentifier: string;
     readonly provenanceId: StableId<"provenance">;
     readonly transitionProvenanceId: StableId<"provenance">;
+    readonly launchIntent?: WorkerLaunchIntent;
   };
   readonly runId: StableId<"run">;
   readonly attemptNumber: number;
@@ -51,6 +54,8 @@ export interface WorkerTransportRequest {
 }
 
 export interface WorkerTransport {
+  /** Trusted supervisor configuration, never a dispatch/model-selected path. */
+  readonly launchFence?: WindowsLaunchFenceDescriptor;
   run(request: WorkerTransportRequest): Promise<unknown>;
 }
 
@@ -170,7 +175,10 @@ export class WorkerManager {
     if (timeoutAt.getTime() > Date.parse(grant.expiresAt)) {
       throw new Error("worker deadline exceeds the capability grant expiry");
     }
+    const launchIntent = this.transport.launchFence === undefined ? undefined : {
+      workerProcessId: createStableId("workerProcess"), fence: parseWindowsLaunchFence(this.transport.launchFence) };
     const started = await this.persistence.startRun({
+      ...(launchIntent === undefined ? {} : { launchIntent }),
       ...(dispatch.dispatchGeneration === undefined ? {} : { dispatchGeneration: dispatch.dispatchGeneration }),
       runId: dispatch.runId,
       packet,
@@ -181,6 +189,10 @@ export class WorkerManager {
       wallTimeMs: packet.limits.wallTimeMs,
       provenanceId: dispatch.provenanceId,
     });
+    // Admission may have committed before a bad/lost acknowledgement. Never
+    // invent another native identity or launch with unpersisted metadata.
+    if (!isDeepStrictEqual(started.launchIntent, launchIntent)) throw new WorkerTerminationUnconfirmedError();
+    const admittedIntent = started.launchIntent === undefined ? undefined : parseWorkerLaunchIntent(started.launchIntent);
 
     const controller = new AbortController();
     const externalAbort = () => controller.abort(dispatch.signal?.reason);
@@ -198,6 +210,7 @@ export class WorkerManager {
     let result: WorkerResult;
     try {
       if (controller.signal.aborted) {
+        if (admittedIntent !== undefined) throw new WorkerTerminationUnconfirmedError();
         const externallyTerminated = signalAborted(dispatch.signal);
         result = createWorkerFailureResult({
           runId: dispatch.runId,
@@ -217,6 +230,7 @@ export class WorkerManager {
         output = await raceWithAbortAfterSettlement(
           this.transport.run({
             execution: { startedAt: started.startedAt, timeoutAt: started.timeoutAt,
+              ...(admittedIntent === undefined ? {} : { launchIntent: admittedIntent }),
               hostIdentifier: this.localHostIdentifier, provenanceId: dispatch.provenanceId,
               transitionProvenanceId: dispatch.transitionProvenanceId },
             runId: dispatch.runId,

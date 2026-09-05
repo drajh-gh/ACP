@@ -2,6 +2,7 @@
 param(
   [switch]$LifecycleOnly,
   [switch]$LaunchRecovery,
+  [switch]$LaunchNative,
   [Parameter(DontShow)]
   [switch]$Internal,
   [Parameter(DontShow)]
@@ -10,6 +11,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+if ($LaunchNative -and (-not $LaunchRecovery -or -not $LifecycleOnly)) { throw 'LaunchNative requires LaunchRecovery and LifecycleOnly to retain the bounded gate budget' }
 
 function Invoke-BoundedDocker {
   param(
@@ -77,6 +79,7 @@ if (-not $Internal) {
     $pwshCommand.Replace('"', '\"'), $scriptPath.Replace('"', '\"'), $outerRunId
   if ($LifecycleOnly) { $commandLine += ' -LifecycleOnly' }
   if ($LaunchRecovery) { $commandLine += ' -LaunchRecovery' }
+  if ($LaunchNative) { $commandLine += ' -LaunchNative' }
   $integrationProcess = $null
 
   try {
@@ -299,6 +302,7 @@ try {
     Invoke-AcpSqlFile 'packages/storage/migrations/0012_worker_launch_recovery.down.sql' '0012 reversible producer smoke'
     Invoke-AcpSqlFile 'packages/storage/migrations/0012_worker_launch_recovery.sql' '0012 re-upgrade'
     Invoke-AcpNodeCheck 'packages/storage/test/integration/worker-launch-recovery.ts' 'Worker launch recovery integration' -TimeoutSeconds 60
+    if ($LaunchNative) { Invoke-AcpNodeCheck 'packages/storage/test/integration/worker-launch-native.ts' 'Worker native launch integration' -TimeoutSeconds 45 }
     Write-Host 'Launch recovery checks passed. No-journal receipts intentionally block producer downgrade; removing only the owned disposable database.'
     return
   }

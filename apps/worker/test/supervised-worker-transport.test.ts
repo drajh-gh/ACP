@@ -30,7 +30,8 @@ function harness(input = request()) {
   const order: string[] = [];
   const closed = Promise.withResolvers<OwnedWorkerExit>();
   void closed.promise.catch(() => {});
-  const normal: OwnedWorkerExit = { treeEmpty: true, failed: false, terminated: false, exitCode: 0, output: '{"synthetic":true}' };
+  const normal: OwnedWorkerExit = { treeEmpty: true, failed: false, terminated: false, exitCode: 0, output: '{"synthetic":true}',
+    ...(input.execution.launchIntent === undefined ? {} : { launchSealed: true }) };
   let registration: WorkerProcessRegistration | undefined;
   let stored: WorkerProcessRecord | undefined;
   let launched: WorkerLaunchRequest | undefined;
@@ -55,7 +56,13 @@ function harness(input = request()) {
       order.push("finish"); return true;
     },
   };
-  const options: SupervisedWorkerTransportOptions = { processes, launcher: { async launch(value) {
+  const options: SupervisedWorkerTransportOptions = { processes,
+    ...(input.execution.launchIntent === undefined ? {} : { launchFence: input.execution.launchIntent.fence, launches: {
+      async finishOwnedLaunch(completion) {
+        assert.equal(completion.runId, input.runId); assert.equal(completion.launchSealed, true);
+        assert.equal(completion.workerProcessId, input.execution.launchIntent!.workerProcessId);
+        order.push("finish-sealed");
+      } } }), launcher: { async launch(value) {
     order.push("launch"); launched = value;
     return { scope: { machineFingerprint: "a".repeat(64), bootedAt: "2026-09-01T00:00:00.000Z", sessionId: 1 },
       processId: 42, processStartToken: "win32-filetime:134329999999999999", startedAt: input.execution.startedAt,
@@ -79,6 +86,45 @@ it("supervisor journals native identity before release, then persists tree closu
   assert.deepEqual(ipc.execution, h.input.execution);
   h.closed.resolve(h.normal); assert.deepEqual(await pending, { synthetic: true });
   assert.deepEqual(h.order, ["launch", "journal", "release", "finish"]);
+});
+
+function fencedRequest(): WorkerTransportRequest {
+  const input = request();
+  return { ...input, execution: { ...input.execution, launchIntent: { workerProcessId: createStableId("workerProcess"),
+    fence: { directory: "C:\\ACP-test\\seals", directoryIdentity: "win32-dir:12345678:0000000000000002",
+      scope: { machineFingerprint: "a".repeat(64), bootedAt: "2026-09-01T00:00:00.000Z", sessionId: 1 } } } } };
+}
+it("intent transport launches the admitted identity and commits sealed closure without disclosing fence metadata", async () => {
+  const h = harness(fencedRequest()), pending = new SupervisedWorkerTransport(h.options).run(h.input);
+  await untilReleased(h);
+  assert.equal(h.launched?.workerProcessId, h.input.execution.launchIntent!.workerProcessId);
+  assert.deepEqual(h.launched?.launchFence, h.input.execution.launchIntent!.fence);
+  assert.equal(Object.hasOwn(JSON.parse(h.released!).execution, "launchIntent"), false);
+  h.closed.resolve(h.normal); await pending;
+  assert.equal(h.order.at(-1), "finish-sealed"); assert.equal(h.order.includes("finish"), false);
+});
+it("intent transport withholds results for missing seals, missing journals and failed creation", async () => {
+  for (const mode of ["seal", "journal", "create", "receipt"] as const) {
+    const h = harness(fencedRequest());
+    if (mode === "journal") h.processes.recordWorkerProcessFromRun = async () => { throw new Error("journal unavailable"); };
+    if (mode === "create") h.options.launcher.launch = async () => { throw new Error("creation uncertain"); };
+    if (mode === "receipt") h.options.launches!.finishOwnedLaunch = async () => { throw new Error("receipt ACK lost"); };
+    const pending = new SupervisedWorkerTransport(h.options).run(h.input);
+    if (mode === "seal" || mode === "receipt") {
+      await untilReleased(h); const { launchSealed: _seal, ...unsealed } = h.normal;
+      h.closed.resolve(mode === "seal" ? unsealed : h.normal);
+    }
+    await assert.rejects(pending, WorkerTerminationUnconfirmedError);
+    assert.equal(h.order.includes("finish"), false);
+  }
+});
+it("intent transport rejects mismatched descriptors and incomplete configuration before creating a root", async () => {
+  const h = harness(fencedRequest());
+  const { launches: _launches, ...missing } = h.options;
+  assert.throws(() => new SupervisedWorkerTransport(missing), /configured together/u);
+  await assert.rejects(new SupervisedWorkerTransport({ ...h.options, launchFence: {
+    ...h.options.launchFence!, directory: "C:\\ACP-test\\different" } }).run(h.input), WorkerTerminationUnconfirmedError);
+  assert.deepEqual(h.order, []);
 });
 
 it("journal rejection stops a suspended tree without releasing it", async () => {

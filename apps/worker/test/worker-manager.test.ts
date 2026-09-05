@@ -64,6 +64,7 @@ class MemoryWorkerRuntime implements WorkerRunPersistence {
     this.starts.push(start);
     this.grant = { ...this.grant, attemptsUsed: this.grant.attemptsUsed + 1 };
     return {
+      ...(start.launchIntent === undefined ? {} : { launchIntent: structuredClone(start.launchIntent) }),
       runId: start.runId,
       startedAt: now.toISOString(),
       timeoutAt: new Date(now.getTime() + start.wallTimeMs).toISOString(),
@@ -95,6 +96,37 @@ class FunctionTransport implements WorkerTransport {
 }
 
 describe("WorkerManager", () => {
+  const launchFence = { directory: "C:\\ACP-test\\seals", directoryIdentity: "win32-dir:12345678:0000000000000002",
+    scope: { machineFingerprint: "b".repeat(64), bootedAt: "2026-09-01T00:00:00.000Z", sessionId: 1 } };
+  it("reserves one process identity at admission and forwards only the persisted intent", async () => {
+    const packet = packetFor(), persistence = new MemoryWorkerRuntime(grantFor(packet), [packet]);
+    const calls = new FunctionTransport(async (request) => successResult(request));
+    const transport = { launchFence, run: (request: WorkerTransportRequest) => calls.run(request) };
+    await managerFor(persistence, transport).dispatch({ ...dispatchFor(packet), dispatchGeneration: 1 });
+    assert.ok(persistence.starts[0]?.launchIntent);
+    assert.deepEqual(calls.requests[0]?.execution.launchIntent, persistence.starts[0]?.launchIntent);
+    assert.equal(persistence.starts.length, 1);
+  });
+  it("cannot launch or project after ambiguous intent admission or prelaunch cancellation", async () => {
+    for (const mode of ["missing", "different", "lost_ack", "cancel"] as const) {
+      const packet = packetFor(), persistence = new MemoryWorkerRuntime(grantFor(packet), [packet]), controller = new AbortController();
+      const calls = new FunctionTransport(async (request) => successResult(request));
+      const start = persistence.startRun.bind(persistence);
+      persistence.startRun = async (input) => {
+        const admitted = await start(input);
+        if (mode === "lost_ack") throw new Error("admission acknowledgement lost");
+        if (mode === "cancel") controller.abort();
+        if (mode === "missing") { const { launchIntent: _intent, ...rest } = admitted; return rest; }
+        if (mode === "different") return { ...admitted, launchIntent: { ...admitted.launchIntent!, workerProcessId: createStableId("workerProcess") } };
+        return admitted;
+      };
+      const pending = managerFor(persistence, { launchFence, run: (request) => calls.run(request) })
+        .dispatch({ ...dispatchFor(packet), dispatchGeneration: 1, signal: controller.signal });
+      if (mode === "lost_ack") await assert.rejects(pending, /acknowledgement lost/u);
+      else await assert.rejects(pending, WorkerTerminationUnconfirmedError);
+      assert.equal(persistence.starts.length, 1); assert.equal(calls.requests.length, 0); assert.equal(persistence.completions.length, 0);
+    }
+  });
   it("dispatches one exact packet through a read-only capability boundary", async () => {
     const packet = packetFor();
     const persistence = new MemoryWorkerRuntime(grantFor(packet), [packet]);

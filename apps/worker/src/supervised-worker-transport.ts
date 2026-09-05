@@ -1,5 +1,7 @@
 import { createStableId, type WorkerResult } from "@acp/domain";
-import type { PostgresWorkerRuntimeStore } from "@acp/storage";
+import { parseWindowsLaunchFence, parseWorkerLaunchIntent, type PostgresWorkerRuntimeStore,
+  type PostgresWorkerLaunchStore, type WindowsLaunchFenceDescriptor } from "@acp/storage";
+import { isDeepStrictEqual } from "node:util";
 import { WorkerTerminationUnconfirmedError, type WorkerTransport, type WorkerTransportRequest } from "./worker-manager.ts";
 import type { OwnedWorker, OwnedWorkerExit, WorkerLauncher } from "./windows-worker-launcher.ts";
 
@@ -8,19 +10,32 @@ export interface SupervisedWorkerTransportOptions {
   readonly processes: Pick<PostgresWorkerRuntimeStore, "recordWorkerProcessFromRun" | "loadWorkerProcess" | "heartbeatWorkerProcess" | "finishWorkerProcess">;
   /** Also configure server-side statement/lock timeouts on the supplied pool. */
   readonly journalOperationTimeoutMs?: number;
+  readonly launchFence?: WindowsLaunchFenceDescriptor;
+  readonly launches?: Pick<PostgresWorkerLaunchStore, "finishOwnedLaunch">;
 }
 
 /** One journaled native root per admitted run; the child never receives a DB client. */
 export class SupervisedWorkerTransport implements WorkerTransport {
   private readonly options: SupervisedWorkerTransportOptions;
+  readonly launchFence?: WindowsLaunchFenceDescriptor;
   constructor(options: SupervisedWorkerTransportOptions) {
     const timeout = options.journalOperationTimeoutMs ?? 5000;
     if (!Number.isInteger(timeout) || timeout < 1 || timeout > 30000) throw new Error("invalid journal operation timeout");
-    this.options = options;
+    if ((options.launchFence === undefined) !== (options.launches === undefined)) throw new Error("launch fence and receipt store must be configured together");
+    if (options.launchFence !== undefined) {
+      const fence = parseWindowsLaunchFence(options.launchFence);
+      this.launchFence = Object.freeze({ ...fence, scope: Object.freeze(fence.scope) });
+    }
+    this.options = { ...options };
   }
 
   async run(request: WorkerTransportRequest): Promise<WorkerResult> {
-    const workerProcessId = createStableId("workerProcess");
+    let intent;
+    try {
+      intent = request.execution.launchIntent === undefined ? undefined : parseWorkerLaunchIntent(request.execution.launchIntent);
+      if (!isDeepStrictEqual(intent?.fence, this.launchFence)) throw new Error("launch intent does not match trusted transport configuration");
+    } catch { throw new WorkerTerminationUnconfirmedError(); }
+    const workerProcessId = intent?.workerProcessId ?? createStableId("workerProcess");
     let owned: OwnedWorker | undefined;
     let journaled = false;
     let registrationAttempted = false;
@@ -30,6 +45,7 @@ export class SupervisedWorkerTransport implements WorkerTransport {
     let exit: OwnedWorkerExit | undefined;
     try {
       owned = await this.options.launcher.launch({ workerProcessId, deadlineAt: request.execution.timeoutAt,
+        ...(intent === undefined ? {} : { launchFence: intent.fence }),
         workspace: request.isolation.workspace, maximumOutputBytes: request.packet.limits.maximumOutputBytes,
         signal: request.signal });
       const identity = owned;
@@ -58,7 +74,8 @@ export class SupervisedWorkerTransport implements WorkerTransport {
       };
       heartbeatTimer = setInterval(renew, 1_000); heartbeatTimer.unref();
       const { signal: _signal, ...input } = request;
-      identity.release(JSON.stringify(input));
+      const { launchIntent: _launchIntent, ...execution } = input.execution;
+      identity.release(JSON.stringify({ ...input, execution }));
       exit = await identity.closed;
       if (exit.failed || exit.terminated || exit.exitCode !== 0 || heartbeatFailed) throw new Error("supervised worker ended without a valid result");
       return JSON.parse(exit.output) as WorkerResult; // WorkerManager validates and binds it.
@@ -81,13 +98,18 @@ export class SupervisedWorkerTransport implements WorkerTransport {
               journaled = true;
             }
           }
-          if (journaled) await this.bounded(this.options.processes.finishWorkerProcess({ workerProcessId,
+          if (intent !== undefined && (!journaled || exit.launchSealed !== true)) throw new WorkerTerminationUnconfirmedError();
+          const completion = { workerProcessId,
             processId: owned.processId, processStartToken: owned.processStartToken,
-            state: exit.terminated || exit.failed ? "terminated" : "exited", exitCode: exit.exitCode,
+            state: exit.terminated || exit.failed ? "terminated" as const : "exited" as const, exitCode: exit.exitCode,
             terminationReason: exit.terminated || exit.failed ? "Owned worker tree was terminated." : "Owned worker tree exited and was drained.",
-            transitionProvenanceId: request.execution.transitionProvenanceId }));
+            transitionProvenanceId: request.execution.transitionProvenanceId };
+          if (journaled) {
+            if (intent !== undefined) await this.bounded(this.options.launches!.finishOwnedLaunch({ ...completion, runId: request.runId, launchSealed: true }));
+            else await this.bounded(this.options.processes.finishWorkerProcess(completion));
+          }
         } catch { throw new WorkerTerminationUnconfirmedError(); }
-      }
+      } else if (intent !== undefined) throw new WorkerTerminationUnconfirmedError();
       // A pending renewal may reject during cleanup, after output was parsed.
       // Confirmed cleanup permits a failure result, never the pending success.
       if (heartbeatFailed) throw new Error("supervised worker heartbeat failed during cleanup");

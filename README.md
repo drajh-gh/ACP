@@ -57,10 +57,11 @@ deployed autonomous service.
   before result projection
 - bounded Windows crash recovery with machine/boot/session-scoped inspection,
   exact per-process claims, fresh runtime provenance, and projection repair after
-  owner retirement or an explicit single-run handoff; ambiguous or unjournaled
-  launches remain pending, and handoff fences late owner writes
+  owner retirement or an explicit single-run handoff; ambiguous stop evidence
+  remains pending, and handoff fences late owner writes
 - opt-in persistent native creation/resume seals and atomic durable launch
-  intents, revocations, claims and no-journal stop receipts; consumer wiring is next
+  intents, revocations, claims and no-journal stop receipts, connected to the
+  manager, native transport and bounded recovery sweeps
 - an authenticated, Origin-checked, trusted-proxy-aware, version-negotiated,
   size-bounded Streamable HTTP MCP control surface for
   idempotent mission creation, exact mission status, and bounded active-mission
@@ -85,6 +86,7 @@ npm run check
 pwsh -NoProfile -File scripts/check-postgres.ps1
 pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly
 pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery
+pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery -LaunchNative
 npm run test:dbos-recovery
 npm run test:worker-supervision
 pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite launch-fence
@@ -123,6 +125,8 @@ The `-LaunchRecovery` gate additionally applies `0012_worker_launch_recovery.sql
 tests producer rollback/re-upgrade before new history, then exercises durable
 sealed receipts and confirms downgrade refusal when no-journal receipt history
 cannot be represented safely by 0011. It removes only its disposable database.
+Add `-LaunchNative` with `-LifecycleOnly -LaunchRecovery` for the bounded Windows
+consumer/receipt/crash proof. It uses synthetic runners, never model credentials.
 `packages/storage/test/integration/host-dispatch.ts`
 uses real PostgreSQL and DBOS queues with synthetic, credential-free transports
 to test reservation races, atomic enqueue rollback, session fencing, dependency
