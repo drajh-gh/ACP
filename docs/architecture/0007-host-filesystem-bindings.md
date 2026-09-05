@@ -1,6 +1,6 @@
 # 0007 — Immutable host filesystem bindings
 
-Status: Accepted for local implementation; no Git execution is enabled.
+Status: Accepted for local implementation; no Git mutation is enabled.
 
 Specification 15.2–15.3 and WF-ISSUE require an exact isolated workspace and an
 exclusive writer lease. A URL, branch spelling or user-supplied path is not a
@@ -18,8 +18,9 @@ and prevents new child bindings; it neither deletes files nor rewrites history.
 These are trusted-host observation records, not execution permission, OS
 sandbox proof or evidence that a path still has its observed contents. No
 historical candidate is backfilled into authoritative repository configuration.
-No existing checkout is registered by the implementation tests. Tests use
-synthetic identities in a disposable database.
+No operator-owned existing checkout is registered by the implementation tests.
+Database authority tests use synthetic identities; a separate end-to-end gate
+registers actual native observations from its own disposable Git fixtures.
 
 The Windows read-only observer now supplies native directory observations for
 ordinary non-bare checkouts and attached linked worktrees. It pins ancestors and
