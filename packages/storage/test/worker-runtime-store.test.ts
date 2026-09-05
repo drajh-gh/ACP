@@ -400,6 +400,18 @@ describe("PostgresWorkerRuntimeStore", () => {
     assert.match(pool.queries[0]?.text ?? "", /reconciliation_claim_expires_at/u);
   });
 
+  it("destroys an ambiguously acknowledged recovery lock without inspecting or pooling it", async () => {
+    const pool = new ScriptedPool([new Error("lost lock acknowledgement")]);
+    await assert.rejects(new PostgresWorkerRuntimeStore(pool).reconcileClaimedWorkerProcess(createStableId("workerProcess"),
+      createStableId("reconciliation"), async () => { assert.fail("must not inspect"); }), /lost lock acknowledgement/u);
+    assert.equal(pool.releasedBroken, true); assert.equal(pool.queries.length, 1);
+  });
+  it("destroys a recovery session whose expected unlock is not confirmed", async () => {
+    const pool = new ScriptedPool([{ rows: [{ acquired: true }] }, { rows: [] }, { rows: [{ pg_advisory_unlock: false }] }]);
+    await assert.rejects(new PostgresWorkerRuntimeStore(pool).reconcileClaimedWorkerProcess(createStableId("workerProcess"),
+      createStableId("reconciliation"), async () => { assert.fail("stale claim must not inspect"); }), /release unconfirmed/u);
+    assert.equal(pool.releasedBroken, true);
+  });
   it("holds a session lock while acting on one exact live process claim", async () => {
     const reconciliationId = createStableId("reconciliation");
     const process = {

@@ -17,6 +17,7 @@ import { WindowsWorkerLauncher, parseWindowsSupervisionScope } from "../../../..
 import { WindowsWorkerTreeInspector } from "../../../../apps/worker/src/windows-worker-recovery.ts";
 import { minimalCodexEnvironment } from "../../../../apps/worker/src/codex-sdk-transport.ts";
 import { WorkerRecoveryRuntime } from "../../../../apps/worker/src/worker-recovery.ts";
+import type { ConnectionPool } from "../../src/database.ts";
 
 const port = Number(process.argv[2]);
 if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error("owned database port required");
@@ -590,6 +591,29 @@ try {
       assert.equal(await workers.recoverStoppedRun({ runId: item.runId, hostIdentifier: replacement.hostIdentifier,
         transitionProvenanceId: prepared.provenanceId, authority: store.authority }), "recovered");
     }
+  });
+  await check("a lost advisory-lock acknowledgement destroys the physical session and releases its lock", async () => {
+    const id = createStableId("workerProcess"); let acquired = false, releasedBroken = false;
+    const intercepted: ConnectionPool = { query: pool.query.bind(pool), async connect() {
+      const client = await pool.connect();
+      return { async query(text, values) {
+        const result = await client.query(text, values);
+        if (text.includes("pg_try_advisory_lock")) { acquired = result.rows[0]?.acquired === true; throw new Error("lost acquired lock acknowledgement"); }
+        return result;
+      }, release(broken) { releasedBroken = broken === true; client.release(broken); },
+      on: client.on.bind(client), off: client.off.bind(client) };
+    } };
+    await assert.rejects(new PostgresWorkerRuntimeStore(intercepted).reconcileClaimedWorkerProcess(id,
+      createStableId("reconciliation"), async () => { assert.fail("uncertain lock must not inspect"); }), /lost acquired lock acknowledgement/u);
+    assert.equal(acquired, true); assert.equal(releasedBroken, true);
+    let held = true;
+    for (let attempt = 0; attempt < 40 && held; attempt++) {
+      held = (await pool.query(`SELECT EXISTS(SELECT 1 FROM pg_locks WHERE locktype='advisory' AND granted AND objsubid=1
+        AND classid=((hashtextextended('acp:worker-process-reconciliation:' || $1,0) >> 32) & 4294967295)::oid
+        AND objid=(hashtextextended('acp:worker-process-reconciliation:' || $1,0) & 4294967295)::oid) AS held`, [id])).rows[0].held;
+      if (held) await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert.equal(held, false);
   });
   await check("database session loss aborts inspection, awaits cleanup, and leaves the journal running", async () => {
     const h = await host("host:recovery-db-loss"), a = await admitted(h, 1000);

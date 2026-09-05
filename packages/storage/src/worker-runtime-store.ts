@@ -963,6 +963,7 @@ export class PostgresWorkerRuntimeStore implements WorkerRunPersistence {
   ): Promise<WorkerProcessReconciliationResult> {
     const client = await this.pool.connect();
     let acquired = false;
+    let acquisitionPending = false;
     let broken = false;
     let transaction = false;
     const controller = new AbortController();
@@ -971,12 +972,15 @@ export class PostgresWorkerRuntimeStore implements WorkerRunPersistence {
     let observationTimer: NodeJS.Timeout | undefined;
     let observing: Promise<WorkerProcessReconciliationObservation> | undefined;
     try {
+      acquisitionPending = true;
       const lock = await client.query<{ readonly acquired: boolean }>(
         `SELECT pg_try_advisory_lock(
            hashtextextended('acp:worker-process-reconciliation:' || $1, 0)
          ) AS acquired`,
         [workerProcessId],
       );
+      if (typeof lock.rows[0]?.acquired !== "boolean") throw new Error("process recovery lock acquisition unconfirmed");
+      acquisitionPending = false;
       acquired = lock.rows[0]?.acquired === true;
       if (!acquired) return { state: "busy" };
 
@@ -1135,6 +1139,7 @@ export class PostgresWorkerRuntimeStore implements WorkerRunPersistence {
       if (terminal.rowCount !== 1) return { state: "stale_claim" };
       return { state: "terminalized", processState: completion.state };
     } finally {
+      if (acquisitionPending) broken = true;
       if (observationTimer) clearTimeout(observationTimer);
       controller.abort();
       try {
@@ -1150,12 +1155,13 @@ export class PostgresWorkerRuntimeStore implements WorkerRunPersistence {
         }
         if (transaction && !broken) await client.query("ROLLBACK");
         if (acquired && !broken) {
-          await client.query(
+          const unlocked = await client.query<{ readonly pg_advisory_unlock: boolean }>(
             `SELECT pg_advisory_unlock(
                hashtextextended('acp:worker-process-reconciliation:' || $1, 0)
              )`,
             [workerProcessId],
           );
+          if (unlocked.rows[0]?.pg_advisory_unlock !== true) throw new Error("process recovery lock release unconfirmed");
         }
       } catch (error) {
         broken = true; throw error;

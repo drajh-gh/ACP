@@ -85,6 +85,7 @@ npm run check:secrets
 npm run check
 pwsh -NoProfile -File scripts/check-postgres.ps1
 pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly
+pwsh -NoProfile -File scripts/check-postgres.ps1 -HostOnly
 pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery
 pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery -LaunchNative
 npm run test:dbos-recovery
@@ -143,6 +144,8 @@ only resources created by their own run.
 The `-LifecycleOnly` variant skips the host/DBOS/native suite for a narrower
 lifecycle and synthetic handoff migration check. The full gate remains sequential, with a 90-second
 overall limit and a 45-second limit for the host suite.
+Use `-HostOnly` for a separate host/DBOS/native gate when the combined cycle does
+not fit that budget; pair it with `-LifecycleOnly` for migration rollback coverage.
 
 No commit, push, deployment, or external integration is performed by these
 commands.

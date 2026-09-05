@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
   [switch]$LifecycleOnly,
+  [switch]$HostOnly,
   [switch]$LaunchRecovery,
   [switch]$LaunchNative,
   [Parameter(DontShow)]
@@ -12,6 +13,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 if ($LaunchNative -and (-not $LaunchRecovery -or -not $LifecycleOnly)) { throw 'LaunchNative requires LaunchRecovery and LifecycleOnly to retain the bounded gate budget' }
+if ($HostOnly -and ($LifecycleOnly -or $LaunchRecovery)) { throw 'HostOnly cannot be combined with LifecycleOnly or LaunchRecovery' }
 
 function Invoke-BoundedDocker {
   param(
@@ -80,6 +82,7 @@ if (-not $Internal) {
   if ($LifecycleOnly) { $commandLine += ' -LifecycleOnly' }
   if ($LaunchRecovery) { $commandLine += ' -LaunchRecovery' }
   if ($LaunchNative) { $commandLine += ' -LaunchNative' }
+  if ($HostOnly) { $commandLine += ' -HostOnly' }
   $integrationProcess = $null
 
   try {
@@ -293,6 +296,10 @@ try {
   Invoke-AcpSqlFile 'packages/storage/migrations/0011_worker_launch_intents.sql' '0011 populated upgrade'
   if (-not $LifecycleOnly) {
     Invoke-AcpNodeCheck 'packages/storage/test/integration/host-dispatch.ts' 'Host dispatch integration' -TimeoutSeconds 45
+    if ($HostOnly) {
+      Write-Host 'Host-only integration passed. Migration rollback is covered separately by LifecycleOnly; removing only the owned disposable database.'
+      return
+    }
   }
   Invoke-AcpNodeCheck 'packages/storage/test/integration/lifecycle-context.ts' 'Lifecycle context integration' 'after'
   Invoke-AcpNodeCheck 'packages/storage/test/integration/worker-handoff.ts' 'Worker handoff integration'
