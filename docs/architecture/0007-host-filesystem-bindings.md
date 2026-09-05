@@ -21,8 +21,27 @@ historical candidate is backfilled into authoritative repository configuration.
 No existing checkout is registered by the implementation tests. Tests use
 synthetic identities in a disposable database.
 
-Follow-up slices must add read-only Git/native identity observation, revalidation
-under a renewable workspace lease, exact stopped-owner release/recovery guards,
+The Windows read-only observer now supplies native directory observations for
+ordinary non-bare checkouts and attached linked worktrees. It pins ancestors and
+metadata files, reopens Git-reported directories to compare physical identities,
+and rejects case-sensitive directory layouts, reparse points, hardlinked metadata,
+unsupported config, includes, separate Git directories and alternate object stores.
+Git commands are fixed, bounded and owned as a process tree, with no inherited
+credential/config injection and lazy fetching disabled. Observation does not
+automatically register a durable binding.
+
+This helper inherits the trusted host's filesystem access; it is **not** an OS
+network sandbox. Config/alternate rejection is a bounded supported-layout check,
+not protection against a hostile concurrent writer creating new metadata after
+an absence check. Directory pins do not freeze all file contents. The observer
+must not be treated as a technically enforced operation/resource grant or as
+proof that arbitrary untrusted repository metadata cannot access other files.
+Production use still needs a trusted host/configuration and revalidation inside
+the forthcoming lease and process-isolation boundary. No delivery admission is
+enabled by this slice.
+
+Follow-up slices must add revalidation under a renewable workspace lease,
+exact stopped-owner release/recovery guards,
 and provisioning reservations before enabling Git mutation or delivery admission.
 The existing run-owned lease foreign key must not be bypassed by a fabricated
 run merely to prepare a worktree. Branch leases must preserve case by digesting

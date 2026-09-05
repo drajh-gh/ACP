@@ -65,6 +65,9 @@ deployed autonomous service.
 - immutable, host-scoped repository/worktree observations with exact native
   directory identities, cross-role alias fencing and append-only retirement;
   this registry grants no Git execution or writer-lease authority
+- read-only Windows/Git observation for supported checkout and linked-worktree
+  layouts, with pinned metadata, exact native identity checks, bounded owned
+  Git children and fail-closed unsupported-layout handling
 - an authenticated, Origin-checked, trusted-proxy-aware, version-negotiated,
   size-bounded Streamable HTTP MCP control surface for
   idempotent mission creation, exact mission status, and bounded active-mission
@@ -95,6 +98,7 @@ pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery 
 npm run test:dbos-recovery
 npm run test:worker-supervision
 pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite launch-fence
+pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite filesystem
 ```
 
 The PostgreSQL invariant fixture is at
@@ -150,6 +154,10 @@ loopback port to prove live DBOS process replacement and exactly-once replay of
 completed steps. `npm run test:worker-supervision` proves the native Windows
 boundary with credential-free subprocesses. These integration scripts have overall deadlines and remove
 only resources created by their own run.
+The `filesystem` suite uses disposable local Git repositories to test directory
+identity, pointer pinning, layout rejection, unchanged metadata and helper/tree
+cleanup. The observer grants no writer lease and is not an OS network sandbox;
+see [the filesystem binding contract](docs/architecture/0007-host-filesystem-bindings.md).
 The `-LifecycleOnly` variant skips the host/DBOS/native suite for a narrower
 lifecycle and synthetic handoff migration check. The full gate remains sequential, with a 90-second
 overall limit and a 45-second limit for the host suite.

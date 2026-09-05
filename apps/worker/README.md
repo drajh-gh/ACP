@@ -208,6 +208,32 @@ no-journal stop receipt is the only independent stop proof for historical work.
 No fake journal is created to make rollback appear safe. Independent mission
 events and permanent native seals are retained when compatible rollback is possible.
 
+## Read-only filesystem observations
+
+`observeWindowsRepository(checkout, signal, { gitExecutable, onSpawn })` describes
+an existing ordinary Windows checkout. `observeWindowsWorktree(repositoryBinding,
+workspace, signal, options)` additionally rechecks the exact machine, checkout and
+common-Git-directory identities before describing an attached linked worktree.
+The executable must be an absolute, host-configured `git.exe`; it is not selected
+from model input. `onSpawn` reports every helper/Git PID and its bounded purpose.
+
+Successful observations carry native directory identities and observation time;
+worktrees also carry the exact branch ref and resolved commit SHA. Cancellation,
+unknown identity, unavailable Git, detached/unborn HEAD and unsupported layouts
+return `unconfirmed`. No registration, file mutation, writer lease or delivery
+admission is performed. A caller may explicitly publish a confirmed observation
+with selected stable IDs and fresh runtime provenance through the 0013 registry;
+that publication still grants no execution authority.
+
+The first supported layout rejects case-sensitive directory namespaces, reparse
+points, hardlinked pointer/config files, separate Git directories, alternate
+object stores and configuration outside a bounded allowlist. It pins config and
+pointer files while reading, disables lazy fetch and inherited Git configuration,
+and owns/terminates every Git child tree. It inherits host filesystem access and
+is not an OS network sandbox or a complete content snapshot. Hostile concurrent
+creation of new metadata needs the later isolation/lease contract; do not infer
+technical operation/resource enforcement from these observations.
+
 ## Verification
 
 `scripts/check-postgres.ps1` applies all eleven ACP migrations, tests real DBOS
@@ -231,6 +257,10 @@ killed helper between CreateProcess and root journaling, exact unjournaled tree
 stop, Unicode paths, scope/directory substitution, partial records and hard links.
 It removes only its owned temporary seal fixtures after their actors exit;
 production seals are retained. The suite has independent 70/90-second bounds.
+`pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite filesystem`
+tests native/Git observations against disposable Unicode-path fixtures, including
+unchanged metadata, exact identities, pointer pinning, unsafe-layout denial,
+missing objects, poisoned environments and confirmed cleanup after cancellation.
 `pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery -LaunchNative`
 combines schema 0012 with a synthetic native runner and the actual host/manager/
 transport path. It covers normal sealed closure, lost owner receipt ACK, delayed

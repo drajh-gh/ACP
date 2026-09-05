@@ -1,4 +1,4 @@
-param([switch]$Internal, [ValidateSet('supervision', 'launch-fence')][string]$Suite = 'supervision')
+param([switch]$Internal, [ValidateSet('supervision', 'launch-fence', 'filesystem')][string]$Suite = 'supervision')
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 if (-not $Internal) {
@@ -18,14 +18,21 @@ if (-not $Internal) {
   exit 0
 }
 Set-Location -LiteralPath $repositoryRoot
-Add-Type -Path 'apps/worker/native/WindowsWorkerJob.cs'
+if ($Suite -eq 'filesystem') {
+  Add-Type -Path @('apps/worker/native/WindowsWorkerScope.cs', 'apps/worker/native/WindowsFilesystemReadLease.cs', 'apps/worker/native/WindowsRepositoryObserver.cs', 'apps/worker/native/WindowsWorkerJob.cs')
+} else { Add-Type -Path 'apps/worker/native/WindowsWorkerJob.cs' }
 $nodePath = (Get-Command node -CommandType Application | Select-Object -First 1).Source
 $testInfo = [Diagnostics.ProcessStartInfo]::new($nodePath)
 $testInfo.UseShellExecute = $false
 $testInfo.CreateNoWindow = $true
 $testInfo.RedirectStandardOutput = $true
 $testInfo.RedirectStandardError = $true
-$testFile = if ($Suite -eq 'launch-fence') { 'apps/worker/test/integration/windows-launch-fence.test.ts' } else { 'apps/worker/test/integration/windows-worker.test.ts' }
+if ($Suite -eq 'filesystem') { $testInfo.Environment['ACP_TEST_GIT'] = (Get-Command git -CommandType Application | Select-Object -First 1).Source }
+$testFile = switch ($Suite) {
+  'launch-fence' { 'apps/worker/test/integration/windows-launch-fence.test.ts' }
+  'filesystem' { 'apps/worker/test/integration/windows-filesystem.test.ts' }
+  default { 'apps/worker/test/integration/windows-worker.test.ts' }
+}
 foreach ($argument in @('--experimental-strip-types', '--test', '--test-concurrency=1', '--test-reporter=spec', $testFile)) { $testInfo.ArgumentList.Add($argument) }
 $testProcess = [Diagnostics.Process]::Start($testInfo)
 $testOutput = $testProcess.StandardOutput.ReadToEndAsync()

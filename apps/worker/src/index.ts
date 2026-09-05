@@ -12,3 +12,4 @@ export * from "./worker-recovery.ts";
 export * from "./worker-launch-recovery.ts";
 export * from "./windows-launch-fence.ts";
 export * from "./windows-worker-recovery.ts";
+export * from "./windows-repository-observer.ts";

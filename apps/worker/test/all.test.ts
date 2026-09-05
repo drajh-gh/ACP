@@ -8,3 +8,4 @@ import "./supervised-worker-transport.test.ts";
 import "./worker-recovery.test.ts";
 import "./worker-launch-recovery.test.ts";
 import "./windows-launch-fence.test.ts";
+import "./windows-repository-observer.test.ts";
