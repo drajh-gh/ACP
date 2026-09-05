@@ -3,6 +3,10 @@ $ProgressPreference = 'SilentlyContinue'
 [Console]::InputEncoding = [Text.UTF8Encoding]::new($false)
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 function Send-AcpFrame($value) { [Console]::Out.WriteLine(($value | ConvertTo-Json -Compress -Depth 8)); [Console]::Out.Flush() }
+function Read-AcpLeaseInteger($value, [long]$maximum) {
+  if (($value -isnot [int] -and $value -isnot [long]) -or $value -lt 1 -or $value -gt $maximum) { throw 'Invalid lease integer' }
+  return [long]$value
+}
 function Seal-AcpOwnedLaunch($descriptor, $workerProcessId, $scope, $boot, $job) {
   $fence = [Acp.Worker.WindowsLaunchFence]::Open($descriptor.directory, $descriptor.directoryIdentity, $workerProcessId,
     $scope.machineFingerprint, $boot, $scope.sessionId, 1000)
@@ -48,13 +52,27 @@ try {
     $launchFence.Begin()
   }
   $phase = 'create-owned-root'
-  $workerJob = [Acp.Worker.WindowsWorkerJob]::Create(('Local\ACP.Worker.' + $launch.workerProcessId),
-    $launch.executable, [string[]]$launch.arguments, $launch.workspace, [string[]]$launch.environment, $deadline)
+  if ($launch.ContainsKey('filesystemLease')) {
+    $lease = $launch.filesystemLease
+    if ($lease -isnot [Collections.IDictionary] -or $lease.Count -ne 3 -or
+        $lease.workerProcessId -cne $launch.workerProcessId) { throw 'Invalid filesystem lease binding' }
+    $workerJob = [Acp.Worker.WindowsWorkerJob]::CreateWithFilesystemLease(('Local\ACP.Worker.' + $launch.workerProcessId),
+      $launch.executable, [string[]]$launch.arguments, $launch.workspace, [string[]]$launch.environment, $deadline,
+      $lease.leaseId, $lease.runId, $lease.workerProcessId)
+  } else {
+    $workerJob = [Acp.Worker.WindowsWorkerJob]::Create(('Local\ACP.Worker.' + $launch.workerProcessId),
+      $launch.executable, [string[]]$launch.arguments, $launch.workspace, [string[]]$launch.environment, $deadline)
+  }
   if ($null -ne $launchFence) {
     $launchFence.RecordRoot($workerJob.ProcessId, $workerJob.ProcessStartToken, $workerJob.StartedAt)
     $launchFence.Dispose(); $launchFence = $null
   }
-  Send-AcpFrame @{ type = 'ready'; processId = $workerJob.ProcessId; processStartToken = $workerJob.ProcessStartToken; startedAt = $workerJob.StartedAt; scope = $scope }
+  $ready = @{ type = 'ready'; processId = $workerJob.ProcessId; processStartToken = $workerJob.ProcessStartToken; startedAt = $workerJob.StartedAt; scope = $scope }
+  if ($launch.ContainsKey('filesystemLease')) {
+    $challenge = $workerJob.BeginFilesystemLeaseChallenge()
+    $ready.filesystemLeaseChallenge = @{ nonce = $challenge.Nonce; epoch = $challenge.Epoch }
+  }
+  Send-AcpFrame $ready
   $phase = 'control-loop'
   # Console.In is a synchronized TextReader whose async methods may block the
   # calling thread. A dedicated StreamReader keeps exit/deadline polling live.
@@ -77,6 +95,20 @@ try {
         if ($line.Length -gt 524288) { throw 'Oversized control frame' }
         $command = $line | ConvertFrom-Json -AsHashtable
         if ($command.type -eq 'stop') { $stopRequested = $true }
+        elseif ($command.type -ceq 'lease-challenge' -and $launch.ContainsKey('filesystemLease') -and -not $stopRequested) {
+          if ($command.Count -ne 1) { throw 'Invalid lease challenge frame' }
+          $challenge = $workerJob.BeginFilesystemLeaseChallenge()
+          Send-AcpFrame @{ type = 'lease-challenge'; nonce = $challenge.Nonce; epoch = $challenge.Epoch }
+        }
+        elseif ($command.type -ceq 'lease-commit' -and $launch.ContainsKey('filesystemLease') -and -not $stopRequested) {
+          if ($command.Count -ne 8) { throw 'Invalid lease commit frame' }
+          $epoch = Read-AcpLeaseInteger $command.epoch 9007199254740991
+          $revision = Read-AcpLeaseInteger $command.revision 9007199254740991
+          $duration = Read-AcpLeaseInteger $command.durationMilliseconds 20000
+          $workerJob.AcceptFilesystemLeaseChallenge($command.nonce, $epoch, $command.leaseId, $command.runId,
+            $command.workerProcessId, $revision, $duration)
+          Send-AcpFrame @{ type = 'lease-accepted'; nonce = $command.nonce; epoch = $epoch; revision = $revision }
+        }
         elseif ($command.type -eq 'go' -and -not $released -and -not $stopRequested) {
           $released = $true
           if ($launch.ContainsKey('launchFence')) {

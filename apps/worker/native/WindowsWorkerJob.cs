@@ -10,6 +10,13 @@ using System.Threading.Tasks;
 
 namespace Acp.Worker;
 
+public sealed class WindowsFilesystemLeaseChallenge
+{
+    public string Nonce { get; }
+    public long Epoch { get; }
+    internal WindowsFilesystemLeaseChallenge(string nonce, long epoch) { Nonce = nonce; Epoch = epoch; }
+}
+
 // Only the trusted bridge owns this handle. It is never inherited by the SDK
 // runner; closing the owner kills its nested tree without bypassing parent jobs.
 public sealed class WindowsWorkerJob : IDisposable
@@ -21,6 +28,9 @@ public sealed class WindowsWorkerJob : IDisposable
     private readonly object lifetime = new object();
     private readonly ManualResetEventSlim ownerClosed = new ManualResetEventSlim(false);
     private volatile bool deadlineExpired;
+    private bool stopping, filesystemLeaseRequired, filesystemLeaseAccepted;
+    private string leaseId, leaseRunId, leaseWorkerProcessId, challengeNonce;
+    private long runDeadlineTicks, bootstrapDeadlineTicks, leaseDeadlineTicks, challengeIssuedTicks, challengeEpoch, leaseRevision;
     public bool DeadlineExpired => deadlineExpired;
     public int ProcessId { get; private set; }
     public string ProcessStartToken { get; private set; }
@@ -31,9 +41,25 @@ public sealed class WindowsWorkerJob : IDisposable
 
     public static WindowsWorkerJob Create(string name, string executable, string[] arguments,
         string workspace, string[] environment, DateTime deadlineUtc)
+        => CreateCore(name, executable, arguments, workspace, environment, deadlineUtc, null, null, null);
+
+    // Private bridge protocol only: the trusted daemon must obtain a fresh DB
+    // ACK after each challenge. The native process has no database credential.
+    public static WindowsWorkerJob CreateWithFilesystemLease(string name, string executable, string[] arguments,
+        string workspace, string[] environment, DateTime deadlineUtc, string leaseId, string runId, string workerProcessId)
+    {
+        if (!Stopwatch.IsHighResolution) throw new PlatformNotSupportedException("native lease watchdog requires QPC");
+        RequireId(leaseId, "lea_"); RequireId(runId, "run_"); RequireId(workerProcessId, "wpr_");
+        if (name != "Local\\ACP.Worker." + workerProcessId) throw new ArgumentException("lease job identity mismatch");
+        return CreateCore(name, executable, arguments, workspace, environment, deadlineUtc, leaseId, runId, workerProcessId);
+    }
+    private static WindowsWorkerJob CreateCore(string name, string executable, string[] arguments,
+        string workspace, string[] environment, DateTime deadlineUtc, string leaseId, string runId, string workerProcessId)
     {
         if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();
         var owner = new WindowsWorkerJob();
+        owner.filesystemLeaseRequired = leaseId != null;
+        owner.leaseId = leaseId; owner.leaseRunId = runId; owner.leaseWorkerProcessId = workerProcessId;
         IntPtr attributes = IntPtr.Zero, handles = IntPtr.Zero, jobs = IntPtr.Zero, environmentBlock = IntPtr.Zero;
         bool attributesInitialized = false;
         try
@@ -107,9 +133,71 @@ public sealed class WindowsWorkerJob : IDisposable
 
     public void Resume()
     {
-        if (thread == IntPtr.Zero) throw new InvalidOperationException("runner already resumed");
-        if (ResumeThread(thread) == uint.MaxValue) Fail("ResumeThread");
-        CloseHandle(thread); thread = IntPtr.Zero;
+        lock (lifetime)
+        {
+            RequireLiveLocked();
+            if (filesystemLeaseRequired && !filesystemLeaseAccepted) throw DenyLeaseLocked();
+            if (thread == IntPtr.Zero) throw new InvalidOperationException("runner already resumed");
+            if (ResumeThread(thread) == uint.MaxValue) Fail("ResumeThread");
+            CloseHandle(thread); thread = IntPtr.Zero;
+        }
+    }
+
+    public WindowsFilesystemLeaseChallenge BeginFilesystemLeaseChallenge()
+    {
+        lock (lifetime)
+        {
+            RequireLiveLocked();
+            if (!filesystemLeaseRequired || challengeNonce != null) throw DenyLeaseLocked();
+            challengeNonce = Guid.NewGuid().ToString("N");
+            challengeIssuedTicks = Stopwatch.GetTimestamp();
+            challengeEpoch = checked(challengeEpoch + 1);
+            return new WindowsFilesystemLeaseChallenge(challengeNonce, challengeEpoch);
+        }
+    }
+    public void AcceptFilesystemLeaseChallenge(string nonce, long epoch, string leaseId, string runId,
+        string workerProcessId, long revision, long durationMilliseconds)
+    {
+        lock (lifetime)
+        {
+            RequireLiveLocked(); // OLD deadline always wins before considering a new ACK.
+            if (!filesystemLeaseRequired || challengeNonce == null || nonce != challengeNonce || epoch != challengeEpoch
+                || leaseId != this.leaseId || runId != leaseRunId || workerProcessId != leaseWorkerProcessId
+                || revision <= leaseRevision || revision > 9007199254740991L || durationMilliseconds <= 250 || durationMilliseconds > 20000)
+                throw DenyLeaseLocked();
+            // Challenge issuance precedes the fresh database heartbeat. Message
+            // queues and COMMIT latency spend budget instead of replenishing it.
+            long deadline = checked(challengeIssuedTicks + MillisecondTicks(durationMilliseconds - 250));
+            long received = Stopwatch.GetTimestamp();
+            if (received >= EffectiveDeadlineTicks() || received >= deadline) throw DenyLeaseLocked();
+            leaseDeadlineTicks = deadline; leaseRevision = revision;
+            filesystemLeaseAccepted = true; challengeNonce = null;
+        }
+    }
+    private void RequireLiveLocked()
+    {
+        if (disposed || stopping || deadlineExpired) throw new InvalidOperationException("owned worker no longer live");
+        if (Stopwatch.GetTimestamp() >= EffectiveDeadlineTicks()) { ExpireLocked(); throw new InvalidOperationException("owned deadline expired"); }
+        if (WaitForSingleObject(process, 0) == 0) throw new InvalidOperationException("owned root already exited");
+    }
+    private InvalidOperationException DenyLeaseLocked()
+    {
+        ExpireLocked(); return new InvalidOperationException("filesystem lease epoch denied");
+    }
+    private void ExpireLocked()
+    {
+        deadlineExpired = true; stopping = true;
+        if (job != IntPtr.Zero) TerminateJobObject(job, 137);
+    }
+    private long EffectiveDeadlineTicks() => filesystemLeaseRequired
+        ? Math.Min(runDeadlineTicks, filesystemLeaseAccepted ? leaseDeadlineTicks : bootstrapDeadlineTicks) : runDeadlineTicks;
+    private static long MillisecondTicks(double milliseconds) => checked((long)(milliseconds * Stopwatch.Frequency / 1000.0));
+    private static void RequireId(string value, string prefix)
+    {
+        if (value == null || value.Length != prefix.Length + 36 || !value.StartsWith(prefix, StringComparison.Ordinal)
+            || !Guid.TryParseExact(value.Substring(prefix.Length), "D", out Guid parsed)
+            || value[prefix.Length + 14] != '4' || "89ab".IndexOf(value[prefix.Length + 19]) < 0
+            || prefix + parsed.ToString("D") != value) throw new ArgumentException("canonical lease identity required");
     }
 
     // The bridge is a dedicated process. Deadline enforcement must not depend
@@ -119,14 +207,24 @@ public sealed class WindowsWorkerJob : IDisposable
     {
         double remaining = (deadlineUtc.ToUniversalTime() - DateTime.UtcNow).TotalMilliseconds;
         if (remaining <= 0 || remaining > 86400000) throw new ArgumentException("invalid deadline");
+        long began = Stopwatch.GetTimestamp();
+        runDeadlineTicks = checked(began + MillisecondTicks(remaining));
+        bootstrapDeadlineTicks = checked(began + MillisecondTicks(15000));
         var watchdog = new Thread(() =>
         {
-            if (ownerClosed.Wait((int)Math.Ceiling(remaining))) return;
-            lock (lifetime)
+            while (true)
             {
-                if (disposed) return;
-                deadlineExpired = true;
-                TerminateJobObject(job, 137);
+                int wait;
+                lock (lifetime)
+                {
+                    if (disposed) return;
+                    long left = EffectiveDeadlineTicks() - Stopwatch.GetTimestamp();
+                    if (deadlineExpired || left <= 0) { ExpireLocked(); break; }
+                    // Recheck native monotonic time after wake, including sleep/
+                    // hibernate. Never block on IPC, database access or stdout.
+                    wait = (int)Math.Min(100, Math.Max(1, Math.Ceiling(left * 1000.0 / Stopwatch.Frequency)));
+                }
+                if (ownerClosed.Wait(wait)) return;
             }
             if (!ownerClosed.Wait(6000)) Environment.Exit(137);
         });
@@ -161,7 +259,12 @@ public sealed class WindowsWorkerJob : IDisposable
     }
     public bool TerminateAndWait(int milliseconds)
     {
-        if (!TerminateJobObject(job, 137)) Fail("TerminateJobObject");
+        lock (lifetime)
+        {
+            if (disposed) throw new ObjectDisposedException(nameof(WindowsWorkerJob));
+            stopping = true;
+            if (!TerminateJobObject(job, 137)) Fail("TerminateJobObject");
+        }
         var elapsed = Stopwatch.StartNew();
         // Accounting can reach zero just before the root process handle is
         // signalled. Both facts must hold; that transient is not a failure.

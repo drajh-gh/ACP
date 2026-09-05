@@ -4,6 +4,11 @@ for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk as Uint8A
 const input = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { mode?: string; text?: string };
 if (input.mode === "hold") setInterval(() => {}, 1000);
 else if (input.mode === "overflow") process.stdout.write("x".repeat(65536));
+else if (input.mode === "hold-descendant") {
+  const child=spawn(process.execPath,["-e","setInterval(() => {}, 1000)"],{ stdio:"ignore",windowsHide:true,detached:true });
+  child.unref(); process.stdout.write(JSON.stringify({ processId:process.pid,childId:child.pid }));
+  setInterval(() => {},1000);
+}
 else {
   const child = input.mode === "descendant" ? spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"],
     { stdio: "ignore", windowsHide: true, detached: true }) : undefined;
