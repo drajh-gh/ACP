@@ -15,3 +15,5 @@ export * from "./worker-launch-store.ts";
 export * from "./repository-binding.ts";
 export * from "./repository-binding-store.ts";
 export * from "./filesystem-writer-store.ts";
+export * from "./worktree-reservation.ts";
+export * from "./worktree-reservation-store.ts";

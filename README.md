@@ -46,6 +46,9 @@ deployed autonomous service.
 - storage-only filesystem writer leases with retained workspace, exact-case
   branch and physical Git-directory exclusion; expiry never frees a writer,
   and release requires a sealed stop plus a terminal run (not yet launcher-wired)
+- storage-only pre-run target holds tied to the exact selected dispatch and
+  workspace grant, sharing exclusion with admitted writers; expiry retains
+  every key, and no provisioning, release or conversion is enabled
 - immutable node-context revisions and identity-only, transactionally assembled
   context packets, with current-reference checks, exact retry/deadline admission,
   and cancellation fencing
@@ -106,6 +109,11 @@ pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery 
 pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery -FilesystemBindings -FilesystemLeases -FilesystemLeaseChannelNative initial
 pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery -FilesystemBindings -FilesystemLeases -FilesystemLeaseChannelNative lost-ack
 pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery -FilesystemBindings -FilesystemLeases -FilesystemLeaseChannelNative periodic-cancel
+pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery -FilesystemBindings -FilesystemLeases -WorktreeReservations core
+pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery -FilesystemBindings -FilesystemLeases -WorktreeReservations races
+pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery -FilesystemBindings -FilesystemLeases -WorktreeReservations expiry
+pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery -FilesystemBindings -FilesystemLeases -WorktreeReservations upgrade
+pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery -FilesystemBindings -FilesystemLeases -WorktreeReservations regression
 npm run test:dbos-recovery
 npm run test:worker-supervision
 pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite launch-fence
@@ -180,6 +188,11 @@ The `filesystem-pins` suite checks retained directory/pointer ownership while
 ordinary Git content updates remain possible. It also demonstrates that optional
 routing-file absence is not reserved and verifies eventual cleanup on pin-holder
 death, not writer-stop ordering. See [the standalone pin contract](docs/architecture/0014-linked-worktree-identity-pins.md).
+The `WorktreeReservations` phases use disposable PostgreSQL through 0015 and
+synthetic filesystem/process identities. They check pre-run holds, race and
+expiry fencing, migration backfill/rollback, and existing writer regression.
+They create no native worktree or provisioner and grant no release/transfer
+authority. See [the pre-run contract](docs/architecture/0015-pre-run-target-holds.md).
 The three `FilesystemLeaseChannelNative` phases are focused, model-free real
 database/native lifecycle checks. Each applies the seeded schema through 0014,
 then runs only its selected scenario; predecessor suites remain separate gates.

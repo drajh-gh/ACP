@@ -26,7 +26,7 @@ export async function launchRecoveryFixture(pool: Pool, hostIdentifier = "host:l
   await clone("runtime_provenance", "provenance_id", legacy("prv"), { provenance_id: template, workflow_binding_id: binding,
     project_profile_id: profile, host_identifier: hostIdentifier, database_schema_version: databaseSchemaVersion });
   await dispatches.registerRuntime(runtime, host);
-  async function assignment(fence = syntheticFence, workspace?: string, delivery = false, wallTimeMs = 60000) {
+  async function assignment(fence = syntheticFence, workspace?: string, delivery = false, wallTimeMs = 60000, assignmentTtlMs = 60000) {
     const missionId = createStableId("mission"), nodeId = createStableId("node"), grantId = createStableId("capabilityGrant");
     await clone("missions", "mission_id", legacy("mis"), { mission_id: missionId, workflow_binding_id: binding, state: "executing",
       requested_scope: "Synthetic launch recovery.", completed_by_evaluation_id: null, transition_provenance_id: template });
@@ -45,7 +45,7 @@ export async function launchRecoveryFixture(pool: Pool, hostIdentifier = "host:l
     const runId = createStableId("run");
     await dispatches.request({ runId, missionId, nodeId, grantId, attemptNumber: 1, applicationVersion: runtime.applicationVersion,
       operation: "synthetic.read", resource: "synthetic:record:1", preferredHostIdentifier: hostIdentifier, provenanceId: template });
-    const a = await dispatches.assign(runId, async () => {}); assert.ok(a);
+    const a = await dispatches.assign(runId, async () => {}, assignmentTtlMs); assert.ok(a);
     const message = { runId, generation: a.generation, hostSessionId: runtime.sessionId };
     assert.equal((await dispatches.prepare(message, hostIdentifier, runtime.applicationVersion, runtime.sessionId)).state, "ready");
     const packet = await contexts.buildAndRecordContextPacket({ contextPacketId: a.contextPacketId, missionId, nodeId, capabilityGrantId: grantId,

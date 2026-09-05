@@ -10,6 +10,8 @@ param(
   [switch]$FilesystemLeaseNative,
   [ValidateSet('initial', 'lost-ack', 'periodic-cancel')]
   [string]$FilesystemLeaseChannelNative,
+  [ValidateSet('core', 'races', 'expiry', 'upgrade', 'regression')]
+  [string]$WorktreeReservations,
   [switch]$MigrationSessions,
   [Parameter(DontShow)]
   [switch]$Internal,
@@ -26,7 +28,8 @@ if ($FilesystemNative -and -not $FilesystemBindings) { throw 'FilesystemNative r
 if ($FilesystemLeases -and (-not $FilesystemBindings -or $FilesystemNative)) { throw 'FilesystemLeases requires FilesystemBindings, without FilesystemNative' }
 if ($FilesystemLeaseNative -and -not $FilesystemLeases) { throw 'FilesystemLeaseNative requires FilesystemLeases' }
 if ($FilesystemLeaseChannelNative -and (-not $FilesystemLeases -or $FilesystemLeaseNative)) { throw 'FilesystemLeaseChannelNative requires FilesystemLeases, without FilesystemLeaseNative' }
-if ($MigrationSessions -and ($LifecycleOnly -or $HostOnly -or $LaunchRecovery -or $LaunchNative -or $FilesystemBindings -or $FilesystemNative -or $FilesystemLeases -or $FilesystemLeaseNative -or $FilesystemLeaseChannelNative)) { throw 'MigrationSessions is a standalone bounded gate' }
+if ($WorktreeReservations -and (-not $FilesystemLeases -or $FilesystemLeaseNative -or $FilesystemLeaseChannelNative)) { throw 'WorktreeReservations requires FilesystemLeases without native modes' }
+if ($MigrationSessions -and ($LifecycleOnly -or $HostOnly -or $LaunchRecovery -or $LaunchNative -or $FilesystemBindings -or $FilesystemNative -or $FilesystemLeases -or $FilesystemLeaseNative -or $FilesystemLeaseChannelNative -or $WorktreeReservations)) { throw 'MigrationSessions is a standalone bounded gate' }
 
 . (Join-Path $PSScriptRoot 'native-channel-fixture.ps1')
 
@@ -103,6 +106,7 @@ if (-not $Internal) {
   if ($FilesystemLeases) { $commandLine += ' -FilesystemLeases' }
   if ($FilesystemLeaseNative) { $commandLine += ' -FilesystemLeaseNative' }
   if ($FilesystemLeaseChannelNative) { $commandLine += ' -FilesystemLeaseChannelNative ' + $FilesystemLeaseChannelNative }
+  if ($WorktreeReservations) { $commandLine += ' -WorktreeReservations ' + $WorktreeReservations }
   if ($MigrationSessions) { $commandLine += ' -MigrationSessions' }
   $integrationProcess = $null
   $channelRoot = $null
@@ -341,14 +345,23 @@ try {
     Write-Host 'Migration session integration passed; removing only the owned disposable database container.'
     return
   }
-  if ($FilesystemLeaseChannelNative) {
-    # This gate tests one real native/database lifecycle, not every predecessor
-    # regression. Apply the same seeded schema directly; broader gates remain
-    # separate so their elapsed time cannot consume the native child's budget.
+  if ($FilesystemLeaseChannelNative -or $WorktreeReservations) {
+    # Focused real database/native phases apply the same seeded schema directly.
+    # Unrelated predecessor suites cannot consume their bounded child's budget.
     foreach ($migration in @('0006_host_dispatch.sql', '0007_supervised_workers.sql', '0008_worker_recovery.sql',
         '0009_lifecycle_context.sql', '0010_worker_handoff.sql', '0011_worker_launch_intents.sql',
         '0012_worker_launch_recovery.sql', '0013_filesystem_bindings.sql', '0014_filesystem_writer_leases.sql')) {
-      Invoke-AcpSqlFile ('packages/storage/migrations/' + $migration) ('Native channel prerequisite schema: ' + $migration)
+      Invoke-AcpSqlFile ('packages/storage/migrations/' + $migration) ('Focused prerequisite schema: ' + $migration)
+    }
+    if ($WorktreeReservations) {
+      Invoke-AcpSqlFile 'packages/storage/migrations/0015_worktree_target_holds.sql' '0015 pre-run target hold upgrade'
+      if ($WorktreeReservations -eq 'regression') {
+        Invoke-AcpNodeCheck 'packages/storage/test/integration/filesystem-writer-leases.ts' 'Legacy filesystem writer regression under 0015' -TimeoutSeconds 30
+      } else {
+        Invoke-AcpNodeCheck 'packages/storage/test/integration/worktree-reservations.ts' 'Pre-run target hold integration' $WorktreeReservations -TimeoutSeconds 30
+      }
+      Write-Host 'Focused pre-run target hold phase passed; predecessor suites remain separate gates.'
+      return
     }
     Invoke-AcpNodeCheck 'packages/storage/test/integration/filesystem-native-channel.ts' 'Native writer channel integration' $FilesystemLeaseChannelNative -TimeoutSeconds 30
     Write-Host 'Focused native writer channel scenario passed; predecessor suites are verified separately.'

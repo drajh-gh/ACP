@@ -28,17 +28,23 @@ export interface WorktreeBindingInput {
 }
 
 /** Lexical rejection only. Filesystem identity must be observed by a trusted host. */
+export function parseCanonicalWindowsBindingPath(value: unknown): string {
+  if (typeof value !== "string" || value.length > 4096 || !/^[a-z]:\\/iu.test(value)
+    || value.length <= 3 || win32.normalize(value) !== value
+    || /[:<>"|?*\u0000-\u001f\u007f]/u.test(value.slice(3))
+    || value.slice(3).split("\\").some((part) => !part || /[. ]$/u.test(part)
+      || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/iu.test(part))) {
+    throw new TypeError("invalid canonical Windows binding path");
+  }
+  return value;
+}
 export function parseWindowsDirectoryBinding(value: unknown): WindowsDirectoryBinding {
   const input = record(value, ["path", "identity"]);
-  if (typeof input.path !== "string" || input.path.length > 4096 || !/^[a-z]:\\/iu.test(input.path)
-    || input.path.length <= 3 || win32.normalize(input.path) !== input.path
-    || /[:<>"|?*\u0000-\u001f\u007f]/u.test(input.path.slice(3))
-    || input.path.slice(3).split("\\").some((part) => !part || /[. ]$/u.test(part)
-      || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/iu.test(part))
-    || typeof input.identity !== "string" || !/^win32-dir:[0-9a-f]{8}:[0-9a-f]{16}$/u.test(input.identity)) {
+  const path = parseCanonicalWindowsBindingPath(input.path);
+  if (typeof input.identity !== "string" || !/^win32-dir:[0-9a-f]{8}:[0-9a-f]{16}$/u.test(input.identity)) {
     throw new TypeError("invalid canonical Windows directory binding");
   }
-  return { path: input.path, identity: input.identity };
+  return { path, identity: input.identity };
 }
 export function parseRepositoryBinding(value: unknown): RepositoryBindingInput {
   const input = record(value, ["repositoryBindingId", "repositoryId", "projectId", "machineFingerprint", "checkout", "commonGitDirectory", "observedAt", "provenanceId"]);
