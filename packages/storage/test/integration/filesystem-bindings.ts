@@ -167,4 +167,8 @@ try {
     assert.deepEqual(await store.recordRepository(repo),repo); // Historical exact read, not new authority.
   });
   process.stdout.write(`Filesystem binding integration: ${checks} checks passed.\n`);
+  if (process.argv[3] === "native") {
+    const { runNativeFilesystemBindings } = await import("./filesystem-native-bindings.ts");
+    await runNativeFilesystemBindings(pool);
+  }
 } finally { await pool.end(); }

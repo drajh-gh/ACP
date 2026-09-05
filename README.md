@@ -95,6 +95,7 @@ pwsh -NoProfile -File scripts/check-postgres.ps1 -HostOnly
 pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery
 pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery -LaunchNative
 pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery -FilesystemBindings
+pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery -FilesystemBindings -FilesystemNative
 npm run test:dbos-recovery
 npm run test:worker-supervision
 pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite launch-fence
@@ -141,6 +142,9 @@ exercise empty-registry rollback/re-upgrade, and test immutable observations,
 physical alias races, exact replay, lost acknowledgements, authority loss and
 retirement. The database gate uses fabricated directory identities and does not
 register or alter an actual checkout. Populated registry downgrade is refused.
+Add `-FilesystemNative` for three end-to-end checks that create only disposable
+local Git fixtures, persist actual native observations, reject a replaced
+checkout and retain retired binding history. No model or external service is used.
 `packages/storage/test/integration/host-dispatch.ts`
 uses real PostgreSQL and DBOS queues with synthetic, credential-free transports
 to test reservation races, atomic enqueue rollback, session fencing, dependency

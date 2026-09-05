@@ -5,6 +5,7 @@ param(
   [switch]$LaunchRecovery,
   [switch]$LaunchNative,
   [switch]$FilesystemBindings,
+  [switch]$FilesystemNative,
   [Parameter(DontShow)]
   [switch]$Internal,
   [Parameter(DontShow)]
@@ -16,6 +17,7 @@ $ErrorActionPreference = 'Stop'
 if ($LaunchNative -and (-not $LaunchRecovery -or -not $LifecycleOnly)) { throw 'LaunchNative requires LaunchRecovery and LifecycleOnly to retain the bounded gate budget' }
 if ($HostOnly -and ($LifecycleOnly -or $LaunchRecovery)) { throw 'HostOnly cannot be combined with LifecycleOnly or LaunchRecovery' }
 if ($FilesystemBindings -and (-not $LifecycleOnly -or -not $LaunchRecovery -or $LaunchNative)) { throw 'FilesystemBindings requires LifecycleOnly and LaunchRecovery, without LaunchNative' }
+if ($FilesystemNative -and -not $FilesystemBindings) { throw 'FilesystemNative requires FilesystemBindings' }
 
 function Invoke-BoundedDocker {
   param(
@@ -86,6 +88,7 @@ if (-not $Internal) {
   if ($LaunchNative) { $commandLine += ' -LaunchNative' }
   if ($HostOnly) { $commandLine += ' -HostOnly' }
   if ($FilesystemBindings) { $commandLine += ' -FilesystemBindings' }
+  if ($FilesystemNative) { $commandLine += ' -FilesystemNative' }
   $integrationProcess = $null
 
   try {
@@ -264,6 +267,9 @@ try {
     $checkStartInfo.RedirectStandardOutput = $true
     $checkStartInfo.RedirectStandardError = $true
     $checkStartInfo.WorkingDirectory = $repositoryRoot
+    if ($FilesystemNative -and $RelativePath -eq 'packages/storage/test/integration/filesystem-bindings.ts') {
+      $checkStartInfo.Environment['ACP_TEST_GIT'] = (Get-Command git -CommandType Application | Select-Object -First 1).Source
+    }
     foreach ($argument in @('--experimental-strip-types', $RelativePath, $checkPort)) {
       $checkStartInfo.ArgumentList.Add($argument)
     }
@@ -317,7 +323,8 @@ try {
       Invoke-AcpSqlFile 'packages/storage/migrations/0013_filesystem_bindings.sql' '0013 filesystem binding upgrade'
       Invoke-AcpSqlFile 'packages/storage/migrations/0013_filesystem_bindings.down.sql' '0013 empty registry downgrade'
       Invoke-AcpSqlFile 'packages/storage/migrations/0013_filesystem_bindings.sql' '0013 filesystem binding re-upgrade'
-      Invoke-AcpNodeCheck 'packages/storage/test/integration/filesystem-bindings.ts' 'Filesystem binding integration' -TimeoutSeconds 30
+      $filesystemPhase = if ($FilesystemNative) { 'native' } else { '' }
+      Invoke-AcpNodeCheck 'packages/storage/test/integration/filesystem-bindings.ts' 'Filesystem binding integration' $filesystemPhase -TimeoutSeconds 30
     }
     Write-Host 'Launch recovery checks passed. No-journal receipts intentionally block producer downgrade; removing only the owned disposable database.'
     return
