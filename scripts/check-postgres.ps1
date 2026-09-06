@@ -19,7 +19,7 @@ param(
   [string]$CounterpartSessions,
   [ValidateSet('core', 'races', 'references', 'snapshot', 'upgrade', 'http', 'source-core', 'source-races', 'source-upgrade')]
   [string]$AttentionQueue,
-  [ValidateSet('core', 'races', 'upgrade', 'history')]
+  [ValidateSet('core', 'races', 'upgrade', 'history', 'http')]
   [string]$RequestIdentity,
   [ValidateSet('core', 'races', 'expiry', 'upgrade', 'regression')]
   [string]$ProvisionerPlans,
@@ -423,7 +423,11 @@ try {
       foreach ($migration in @('0015_worktree_target_holds.sql','0016_worktree_provisioner_attempts.sql','0017_capability_readiness.sql','0018_project_profile_proposals.sql','0019_provisioner_process_journal.sql','0020_windows_native_root_claims.sql','0021_provisioner_admissions.sql','0022_attention_items.sql','0023_unknown_outcome_attention.sql','0024_request_identity.sql')) {
         Invoke-AcpSqlFile ('packages/storage/migrations/' + $migration) ('Request identity prerequisite: ' + $migration)
       }
-      Invoke-AcpNodeCheck 'packages/storage/test/integration/requests.ts' 'Request identity integration' $RequestIdentity -TimeoutSeconds 30
+      if ($RequestIdentity -eq 'http') {
+        Invoke-AcpNodeCheck 'apps/control-api/test/integration/request-history.ts' 'Recorded request PostgreSQL/HTTP integration' -TimeoutSeconds 30
+      } else {
+        Invoke-AcpNodeCheck 'packages/storage/test/integration/requests.ts' 'Request identity integration' $RequestIdentity -TimeoutSeconds 30
+      }
       Write-Host 'Focused request identity phase passed; no workflow, approval, closure or external effect was executed.'
       return
     }

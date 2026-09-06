@@ -4,7 +4,7 @@
       "url": "https://acp.example.invalid/mcp",
       "bearer_token_env_var": "ACP_MCP_BEARER_TOKEN",
       "http_headers": {
-        "X-ACP-Plugin-Version": "0.4.0"
+        "X-ACP-Plugin-Version": "0.5.0"
       },
       "required": true,
       "startup_timeout_sec": 20,
@@ -13,6 +13,7 @@
         "create_mission",
         "get_mission_status",
         "get_mission_attention",
+        "get_request_history",
         "get_project_profile_proposal",
         "get_profile_confirmation_request",
         "get_project_readiness",

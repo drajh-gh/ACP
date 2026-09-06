@@ -24,6 +24,7 @@ const bearerToken = "a-high-entropy-test-token-that-is-long-enough";
 const pluginVersion = "0.1.0";
 
 class MemoryCounterpartService implements CounterpartMissionPersistence {
+  async getRequestHistory() { return undefined; }
   async getAttentionQueue() { return undefined; }
   async getProjectProfileProposal() { return undefined; }
   async getProfileConfirmationRequest() { return undefined; }
@@ -166,7 +167,7 @@ describe("authenticated counterpart MCP", () => {
       const tools = await client.listTools();
       assert.deepEqual(
         tools.tools.map((tool) => tool.name).sort(),
-        ["create_mission", "get_mission_attention", "get_mission_status", "get_profile_confirmation_request", "get_project_profile_proposal", "get_project_readiness", "list_active_missions"],
+        ["create_mission", "get_mission_attention", "get_mission_status", "get_profile_confirmation_request", "get_project_profile_proposal", "get_project_readiness", "get_request_history", "list_active_missions"],
       );
 
       const created = await client.callTool({

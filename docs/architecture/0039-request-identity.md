@@ -1,6 +1,6 @@
 # 0039 — Original request identity and mission associations
 
-Status: Private storage and recorded-history projection implemented; operator and board integration absent.
+Status: Private storage and authenticated counterpart history read implemented; browser operator and board integration absent.
 
 The product contract requires one original request to survive work across multiple
 missions. A mission rename cannot establish that identity. The independent P2a
@@ -76,7 +76,27 @@ run in the production read. The caller owns bounded connection and SQL settings.
 This is historical reporting: retirement of a recording producer neither hides
 the original history nor refreshes its timestamps or grants authority. The read
 works with SELECT on only the two request tables and no access to runtime
-provenance. It remains a private persistence function, not an authenticated API.
+provenance. The persistence function is exposed only through the separately checked
+counterpart boundary described below; no browser writer is connected.
+
+## Authenticated counterpart read
+
+`get_request_history` exposes the same historical snapshot through ACP's existing
+trusted bearer-client MCP boundary. It is not per-user/project authorization or
+browser operator identity. Exact two-field selectors reject before persistence;
+the returned object is parsed again against that selected identity before it can
+reach MCP serialization. Unknown fields, unsafe accessors, substituted identity,
+bad chronology, over-limit data and private persistence exceptions produce one
+fixed public error, with no partial history, fallback or automatic retry. The
+64 KiB structured-payload cap includes the outer `history` wrapper.
+
+Control API and source counterpart plugin version 0.5.0 advertise eight tools.
+Default compatibility retains versions 0.1.0 through 0.4.0; explicit operator
+allowlists remain authoritative. The new tool is read-only and adds no write,
+creation, association, approval, closure or external-effect path. Updating the
+source plugin does not install it, change a host's token/URL, refresh a cache or
+deploy the API. Its instructions distinguish original reported wording from
+approved scope and independently observed mission status.
 
 ## Qualification and remaining boundary
 
@@ -106,7 +126,20 @@ TypeScript, all 814 local tests, secret scanning and whitespace checks. No
 additional browser behavior changed; the prior 15-group prototype check remains
 applicable to its unchanged source hashes.
 
-No authenticated request endpoint, browser binding, live intake,
+The authenticated read adds eleven HTTP tests (all failed RED before the new tool
+and version were implemented) and six actual PostgreSQL/HTTP groups through
+`-RequestIdentity http`. They cover all five compatible client versions, explicit
+version restrictions, wrapper overflow, exact identity, unsafe returned objects,
+private error masking, two-table SELECT-only access, unchanged control history and
+zero SQL for rejected selectors, missing authentication and untrusted origins.
+Independent boundary assurance passes; the counterpart skill validates locally.
+The complete candidate passes strict TypeScript and all 828 local tests. The
+regression run also exposed an older provisioner test's real-time 10 ms assumption;
+a controlled delayed-I/O probe reproduced it, and a test-only clock correction
+passed the same probe without changing production shutdown behavior. Independent
+delta review confirms the pre-deadline closure and post-close cleanup assertions.
+
+No authenticated request writer, browser binding, live intake,
 proposal decision, obligation, communication plan or closure evaluator is part of
 this checkpoint. The synthetic Operations prototype remains in-memory and cannot
 persist these records. Further selected work must preserve both that distinction

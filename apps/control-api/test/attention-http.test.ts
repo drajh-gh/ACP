@@ -48,12 +48,12 @@ function denied(result: Awaited<ReturnType<Client["callTool"]>>) {
   assert.equal(result.isError, true); assert.equal(result.structuredContent, undefined);
   assert.deepEqual(result.content, [{ type: "text", text: unavailable }]);
 }
-for (const version of ["0.1.0", "0.2.0", "0.3.0", "0.4.0"]) it(`attention returns all twelve recorded types without acting for compatible plugin ${version}`, async () => {
+for (const version of ["0.1.0", "0.2.0", "0.3.0", "0.4.0", "0.5.0"]) it(`attention returns all twelve recorded types without acting for compatible plugin ${version}`, async () => {
   await withClient(async (client, data) => {
     const tool = (await client.listTools()).tools.find(tool => tool.name === toolName); assert.ok(tool);
     assert.deepEqual(tool.annotations, { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
     assert.equal(tool.inputSchema.additionalProperties, false); assert.ok(tool.outputSchema);
-    assert.deepEqual(client.getServerVersion(), { name: "acp-control", version: "0.4.0" });
+    assert.deepEqual(client.getServerVersion(), { name: "acp-control", version: "0.5.0" });
     const result = await client.callTool({ name: toolName, arguments: data.query }); assert.notEqual(result.isError, true);
     assert.deepEqual(result.structuredContent, { attention: data.queue }); assert.deepEqual(data.reads, [data.query]); assert.equal(data.writes(), 0);
     assert.match(JSON.stringify(result.content), /not decisions|not permission/u);
@@ -128,9 +128,9 @@ it("attention preserves operator version restrictions and repository plugin feat
     await assert.rejects(withClient(async () => assert.fail("unexpected dispatch"), version, allowed), error => error instanceof Error && "code" in error && error.code === 426);
   const manifest = JSON.parse(await readFile(new URL("../../../plugins/codex-counterpart/.codex-plugin/plugin.json", import.meta.url), "utf8"));
   const mcp = JSON.parse(await readFile(new URL("../../../plugins/codex-counterpart/.mcp.json", import.meta.url), "utf8"));
-  assert.equal(manifest.version, "0.4.0"); assert.equal(mcp.mcpServers["acp-control"].http_headers["X-ACP-Plugin-Version"], manifest.version);
+  assert.equal(manifest.version, "0.5.0"); assert.equal(mcp.mcpServers["acp-control"].http_headers["X-ACP-Plugin-Version"], manifest.version);
   assert.deepEqual(mcp.mcpServers["acp-control"].enabled_tools.slice().sort(), ["create_mission", "get_mission_attention", "get_mission_status",
-    "get_profile_confirmation_request", "get_project_profile_proposal", "get_project_readiness", "list_active_missions"]);
+    "get_profile_confirmation_request", "get_project_profile_proposal", "get_project_readiness", "get_request_history", "list_active_missions"]);
 });
 it("attention authentication and origin checks reject calls before any persistence read", async () => {
   await withClient(async (_client, data, url) => {

@@ -1,5 +1,7 @@
-import { parseRequestHistory, parseRequestHistoryQuery, requestHistoryMaximumAssociations, requestHistoryMaximumBytes, type RequestHistory } from "@acp/domain";
+import { parseRequestHistory, parseRequestHistoryQuery, requestHistoryMaximumAssociations, requestHistoryMaximumBytes, type RequestHistory, type RequestHistoryQuery } from "@acp/domain";
 import type { QueryExecutor } from "./database.ts";
+
+export interface RequestHistoryPersistence { getRequestHistory(query: RequestHistoryQuery): Promise<RequestHistory | undefined>; }
 
 /** Private one-statement recorded history. Caller owns bounded connection and SQL
  * settings. No locks, authority checks with side effects, or fallback snapshots. */

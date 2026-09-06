@@ -11,9 +11,9 @@ control endpoint. Set `ACP_MCP_BEARER_TOKEN` in the Codex host environment to
 the same high-entropy secret configured on the control API. Do not store that
 secret in this repository.
 
-This source package is version `0.4.0` and sends `X-ACP-Plugin-Version: 0.4.0`;
+This source package is version `0.5.0` and sends `X-ACP-Plugin-Version: 0.5.0`;
 the control API rejects a missing or incompatible version before tool dispatch.
-The API's default compatibility list retains `0.1.0`–`0.3.0` and admits `0.4.0`; an
+The API's default compatibility list retains `0.1.0`–`0.4.0` and admits `0.5.0`; an
 operator's explicit allowlist remains authoritative. Updating this source does
 not install the plugin, refresh a cache, or deploy the API.
 
@@ -46,3 +46,14 @@ evidence body, effect preview body or private producer receipt is returned.
 Expired items remain recorded, freshness is not assessed and an empty page is
 not a global health signal. This read cannot acknowledge, resolve, approve,
 notify, execute quiet-hours policy or grant permission from a listed response.
+
+The eighth tool, `get_request_history`, requires migration 0024. Supply the exact
+project ID and `req_` request ID to retrieve the original statement and all recorded
+mission associations in one snapshot. It does not return source intake envelopes,
+private producer metadata, current mission state or an approval. Fixed limits of
+100 associations and a 64 KiB structured payload (including the public wrapper)
+deny the whole result on overflow; there is no partial history or fallback cursor.
+An empty association list is not a closed request or complete intake coverage.
+This read cannot create requests, link missions, approve scope, close or execute
+work. Read individual mission status separately if needed; separate calls do not
+share a snapshot. Browser operator authentication remains separate and unimplemented.

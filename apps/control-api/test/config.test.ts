@@ -26,7 +26,7 @@ describe("control API configuration", () => {
       "localhost:8787",
     ]);
     assert.deepEqual(config.allowedOrigins, []);
-    assert.deepEqual(config.allowedPluginVersions, ["0.1.0", "0.2.0", "0.3.0", "0.4.0"]);
+    assert.deepEqual(config.allowedPluginVersions, ["0.1.0", "0.2.0", "0.3.0", "0.4.0", "0.5.0"]);
     assert.deepEqual(config.trustedProxyAddresses, [
       "127.0.0.1",
       "::1",

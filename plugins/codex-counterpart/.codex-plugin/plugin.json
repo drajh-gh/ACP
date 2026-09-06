@@ -1,7 +1,7 @@
 {
   "name": "codex-counterpart",
-  "version": "0.4.0",
-  "description": "Create and inspect ACP missions, recorded attention and readiness, and inert project profile review documents from Codex.",
+  "version": "0.5.0",
+  "description": "Create and inspect ACP missions, recorded request history, attention and readiness, and inert project profile review documents from Codex.",
   "author": {
     "name": "ACP"
   },
@@ -9,8 +9,8 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "ACP Counterpart",
-    "shortDescription": "Inspect ACP attention, readiness and profile drafts.",
-    "longDescription": "Creates durable ACP missions, reports independent lifecycle projections, and reads recorded attention, readiness and complete profile review documents without deciding, notifying, confirming, publishing, activating or granting authority.",
+    "shortDescription": "Inspect ACP requests, attention and readiness.",
+    "longDescription": "Creates durable ACP missions, reports independent lifecycle projections, and reads original request history, attention, readiness and complete profile review documents without deciding, notifying, confirming, publishing, activating or granting authority.",
     "developerName": "ACP",
     "category": "Productivity",
     "capabilities": ["Interactive", "Write"],

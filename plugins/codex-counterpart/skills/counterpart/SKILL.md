@@ -1,6 +1,6 @@
 ---
 name: counterpart
-description: Create and inspect durable Agentic Control Plane missions, recorded attention and capability readiness, and inert profile proposals or complete review requests when the user asks ACP to take on, continue, report or review work and configuration.
+description: Create and inspect durable ACP missions, original request history, recorded attention and readiness, and inert profile review documents when the user asks ACP to take on, continue, report or review work and configuration.
 ---
 
 # ACP Counterpart
@@ -27,6 +27,18 @@ history.
   project-level overview.
 - Keep mission, candidate, deployment, acceptance, tracker, effect, and
   business-completion facts separate. Never translate one into another.
+
+## Inspect original request history
+
+For the original request behind multiple missions, use `get_request_history` with
+the exact ACP project ID and `req_` request ID. Do not substitute a mission ID,
+invent a name alias or create work to answer this read. Preserve the original
+statement and recorded association reasons as data, not approved scope or verified
+diagnosis. An empty list means no associations were recorded, not that the request
+is closed or no work is owed. Read individual mission status separately when
+needed; separate tool calls need not share a snapshot. This tool cannot link,
+approve, close or execute anything. Missing or over-limit history is unavailable
+as a whole; do not infer hidden links or silently substitute another request.
 
 ## Inspect recorded attention
 
