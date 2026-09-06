@@ -56,6 +56,31 @@ private transaction disposal, uncertain-commit recovery and public disclosure
 checks remain authoritative. No new table, migration, public writer or provider
 inventory is introduced, and this is not the complete §13.1 onboarding flow.
 
+### Static manifest extraction
+
+The worker's `discoverNpmPackageManifest` is a concrete syntax adapter for supplied
+package-JSON bytes. It checks a supplied exact content hash before fatal UTF-8
+decoding, rejects duplicate decoded JSON keys and extracts only conventional
+test/lint/build script declarations into existing attributed observations. Names
+and command fingerprints are retained, including matching pre/post fingerprints;
+command bodies are undisclosed and never executed. Names suggest configuration
+categories only, not verified purpose, successful checks, required gates or safety.
+
+Absent relevant declarations leave the reducer's fields unanswered. Unknown
+manifest properties are ignored, not interpreted as project identity, registered
+repositories, authority or runtime availability. Parsing and extracted facts have
+separate explicit bounds, and any failure returns no partial observation set.
+See the [worker contract](../../apps/worker/README.md#static-npm-manifest-discovery)
+for the exact limits and official syntax references.
+
+This adapter proves its copied bytes match the caller-supplied hash, not that the
+evidence ID currently names those bytes in PostgreSQL or on disk. The fixture's
+explicit acquisition and evidence registration demonstrate correct composition,
+not independent production source identity or a race-free acquisition protocol.
+The generic writer still trusts source attribution and does not compare the
+adapter's top-level content hash; current database evidence fingerprints and
+disclosure checks remain separate. Secure acquisition/binding is future work.
+
 ### Field states
 
 The schema `1.0.0` checklist has exactly 62 independently answerable fields in

@@ -14,3 +14,4 @@ import "./windows-leased-worktree-observer.test.ts";
 import "./filesystem-writer-guard.test.ts";
 import "./native-filesystem-writer-controller.test.ts";
 import "./windows-filesystem-lease-channel.test.ts";
+import "./npm-package-manifest-discovery.test.ts";

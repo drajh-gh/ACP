@@ -4,6 +4,43 @@ This package is an embeddable DBOS worker runtime, not an automatically started
 production daemon. Credentials, project configuration, service installation,
 and a deployed endpoint are not provisioned by its tests.
 
+## Static npm manifest discovery
+
+`discoverNpmPackageManifest` is a command-free syntax adapter over explicitly
+supplied manifest bytes, an evidence ID and an expected SHA-256 content hash.
+It copies the exact byte view, checks the hash, decodes UTF-8 strictly and rejects
+duplicate decoded JSON keys. Its bounded result reports only configured
+`test`/`test:*`, `lint`/`lint:*` and `build`/`build:*` script names and command
+fingerprints, including matching pre/post command fingerprints. Command bodies
+are undisclosed and execution is explicitly not performed. These naming groups
+are extraction conventions, not proof of a command's purpose or safety.
+
+The adapter never executes a script, resolves environment variables, reads paths,
+traverses workspaces or contacts a provider. It does not infer required gates,
+CI status, installed dependencies, host readiness or authority. Absent categories
+produce no observation; the generic reducer keeps those profile fields missing.
+Malformed, ambiguous, mismatched or oversized input returns a constant unconfirmed
+result with no partial observations. A caller must not reinterpret that result as
+a successful empty-source scan.
+
+Bounds are 262,144 bytes, JSON depth 32 and 10,000 nodes, 100 scripts, 200-character
+names and 4,096-byte command strings, followed by the shared proposal fact limits.
+Only the supplied byte/hash relationship is checked. Filesystem identity,
+project scope, current evidence-row identity/hash, source authorization, acquisition
+and appropriate disclosure of script names remain the trusted producer's job.
+The current generic writer pins database evidence but does not independently
+compare this adapter's top-level `contentHash` to that evidence row.
+
+`pwsh -NoProfile -File scripts/check-postgres.ps1 -ProfileProposals manifest`
+uses explicit fixture-only file acquisition and disposable PostgreSQL evidence
+to exercise a correctly composed parser/reducer/private-writer path. It does not
+establish a production acquisition pipeline or run the discovered commands.
+
+The source syntax and hook distinction follow the official [npm manifest
+scripts contract](https://docs.npmjs.com/cli/v11/configuring-npm/package-json/#scripts)
+and [script lifecycle](https://docs.npmjs.com/cli/v11/using-npm/scripts/); presence is
+configuration evidence, never successful execution.
+
 ## Host-aware execution
 
 The optional fourth argument to `launchWorker` is a `HostDispatchRuntime` built

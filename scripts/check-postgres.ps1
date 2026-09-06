@@ -18,7 +18,7 @@ param(
   [string]$ProvisionerPlans,
   [ValidateSet('core', 'races', 'expiry', 'limits', 'snapshot', 'upgrade', 'regression', 'http')]
   [string]$Readiness,
-  [ValidateSet('core', 'races', 'references', 'snapshot', 'upgrade', 'regression', 'http', 'discovery')]
+  [ValidateSet('core', 'races', 'references', 'snapshot', 'upgrade', 'regression', 'http', 'discovery', 'manifest')]
   [string]$ProfileProposals,
   [switch]$MigrationSessions,
   [Parameter(DontShow)]
@@ -373,7 +373,9 @@ try {
       foreach ($migration in @('0015_worktree_target_holds.sql','0016_worktree_provisioner_attempts.sql','0017_capability_readiness.sql','0018_project_profile_proposals.sql')) {
         Invoke-AcpSqlFile ('packages/storage/migrations/' + $migration) ('Profile proposal schema: ' + $migration)
       }
-      if ($ProfileProposals -eq 'http') {
+      if ($ProfileProposals -eq 'manifest') {
+        Invoke-AcpNodeCheck 'apps/worker/test/integration/npm-manifest-discovery.ts' 'Static manifest discovery and private proposal persistence' -TimeoutSeconds 30
+      } elseif ($ProfileProposals -eq 'http') {
         Invoke-AcpNodeCheck 'apps/control-api/test/integration/profile-proposals.ts' 'Read-only profile proposal PostgreSQL and HTTP integration' -TimeoutSeconds 30
       } elseif ($ProfileProposals -eq 'regression') {
         Invoke-AcpNodeCheck 'packages/storage/test/integration/readiness.ts' 'Readiness regression under 0018' 'core' -TimeoutSeconds 30
