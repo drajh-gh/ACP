@@ -380,6 +380,16 @@ the enclosing owned native job must exit before the UUID fixture is removed.
 
 ### Existing worker and database gates
 
+The separate inert provisioner journal records trusted native claims only; it is
+not yet connected to a launcher or the native sealing helper. See
+[ADR0023](../../docs/architecture/0023-inert-provisioner-journal.md).
+Run `scripts/check-postgres.ps1 -ProvisionerJournal` with `core`, `races`, `expiry`,
+`upgrade` and `regression` separately and sequentially. This standalone gate
+rejects other modes, uses seeded schema through 0019, and keeps the existing
+30-second child/90-second outer limits. Upgrade seeds retained pre-0019 plans
+before adding the journal; regression runs the existing plan and target-hold
+core suites under 0019. Synthetic path/PID claims create no filesystem or process.
+
 `pwsh -NoProfile -File scripts/check-postgres.ps1 -RepositoryBindingOnly` is a
 standalone registry-only gate: seeded schema through 0013, empty down/up, immutable
 record/retirement and real connection-loss checks, and owned database cleanup.

@@ -211,7 +211,8 @@ try {
       const x=await target(),p=await plans.plan(x.input);
       for(const sql of ["UPDATE acp.worktree_provisioner_attempts SET base_revision=base_revision WHERE attempt_id=$1",
         "DELETE FROM acp.worktree_provisioner_attempts WHERE attempt_id=$1"]) await assert.rejects(pool.query(sql,[p.attemptId]),/immutable|append.only/u);
-      await assert.rejects(pool.query("TRUNCATE acp.worktree_provisioner_attempts"),/immutable|append.only/u);
+      // Include later journal dependants so this tests append-only guards rather than FK ordering.
+      await assert.rejects(pool.query("TRUNCATE acp.worktree_provisioner_attempts CASCADE"),/immutable|append.only/u);
       await assert.rejects(migration("down"),/retained provisioner plan history/u); assert.deepEqual(await plans.load(p.attemptId),p);
     });
   }

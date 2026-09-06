@@ -83,6 +83,9 @@ deployed autonomous service.
 - a standalone permanent native provisioner fence with separate `wpa_` records
   and exact owned-tree seal/stop observations; no provisioner launcher, database
   stop receipt, plan consumer, release or Git mutation is enabled
+- an independent append-only provisioner process/sealed-stop claim ledger with
+  exact native 100ns root identity, original-owner admission, permanent stop-first
+  denial and historical replay; no native consumer, GO or hold release is wired
 - immutable node-context revisions and identity-only, transactionally assembled
   context packets, with current-reference checks, exact retry/deadline admission,
   and cancellation fencing

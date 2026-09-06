@@ -2,6 +2,9 @@
 
 Status: M2 native prerequisite. No database-plan consumer, provisioner launcher,
 GO channel, database process/stop journal or Git mutation is introduced.
+The later independent storage-only process/stop claim ledger is specified in
+[ADR0023](0023-inert-provisioner-journal.md). This native helper is not wired to it;
+no combined native/database journal proof follows from either prerequisite alone.
 
 ## A separate native identity
 

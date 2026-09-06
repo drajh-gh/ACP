@@ -5,6 +5,9 @@ native fence, process launch, Git mutation or worker admission is enabled.
 The standalone native fence was subsequently added separately in
 [ADR0022](0022-native-provisioner-fence.md); it does not consume these plans or
 add their missing database process/stop protocol.
+The subsequent inert claim ledger is specified in
+[ADR0023](0023-inert-provisioner-journal.md); it does not consume a plan for native
+execution, permit GO or add successful provisioning/release semantics.
 
 ## Preserve an attempt before any native creation
 

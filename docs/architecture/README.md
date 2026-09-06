@@ -32,3 +32,4 @@ explain how its fixed technology choices shape the repository.
 | [0020](0020-inert-profile-proposals.md) | Inert whole-profile proposals and exact review requests |
 | [0021](0021-retained-profile-proposals.md) | Retained inert profile-proposal history |
 | [0022](0022-native-provisioner-fence.md) | Native-only permanent provisioner fencing |
+| [0023](0023-inert-provisioner-journal.md) | Inert provisioner process and sealed-stop journal |
