@@ -1,10 +1,11 @@
-param([switch]$Internal, [ValidateSet('supervision', 'launch-fence', 'provisioner-fence', 'provisioner-admission', 'provisioner-bridge', 'provisioner-runner', 'filesystem', 'filesystem-pins', 'provisioner-observation', 'lease-watchdog', 'lease-liveness', 'lease-bootstrap', 'lease-channel', 'lease-channel-liveness')][string]$Suite = 'supervision', [string]$TestNamePattern, [string]$OwnedFixtureRun)
+param([switch]$Internal, [ValidateSet('supervision', 'launch-fence', 'provisioner-fence', 'provisioner-admission', 'provisioner-bridge', 'provisioner-runner', 'provisioner-pins', 'filesystem', 'filesystem-pins', 'provisioner-observation', 'lease-watchdog', 'lease-liveness', 'lease-bootstrap', 'lease-channel', 'lease-channel-liveness')][string]$Suite = 'supervision', [string]$TestNamePattern, [string]$OwnedFixtureRun)
 $ErrorActionPreference = 'Stop'
 if ($Suite -eq 'provisioner-observation' -and -not $TestNamePattern) { throw 'Select a bounded provisioner observation phase with -TestNamePattern; see README.' }
 if ($Suite -eq 'provisioner-fence' -and $TestNamePattern -notin @('^provisioner core:', '^provisioner safety:')) { throw 'Select an exact bounded provisioner fence core or safety phase; see README.' }
 if ($Suite -eq 'provisioner-admission' -and $TestNamePattern -notin @('^provisioner admission core:', '^provisioner admission modes:', '^provisioner admission expiry:', '^provisioner admission bootstrap:')) { throw 'Select an exact bounded provisioner admission phase; see README.' }
 if ($Suite -eq 'provisioner-bridge' -and $TestNamePattern -notin @('^provisioner bridge core:', '^provisioner bridge ack-owner:', '^provisioner bridge ack-plan:', '^provisioner bridge ack-root:', '^provisioner bridge ack-fence:', '^provisioner bridge framing:', '^provisioner bridge safety:', '^provisioner bridge loss:')) { throw 'Select an exact bounded provisioner bridge phase; see README.' }
 if ($Suite -eq 'provisioner-runner' -and $TestNamePattern -notin @('^provisioner runner core:', '^provisioner runner loss:', '^provisioner runner expiry:')) { throw 'Select an exact bounded provisioner runner phase; see README.' }
+if ($Suite -eq 'provisioner-pins' -and $TestNamePattern -notin @('^provisioner pins core:', '^provisioner pins rejection:')) { throw 'Select an exact bounded provisioner pins phase; see README.' }
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'native-channel-fixture.ps1')
 if (-not $Internal) {
@@ -17,7 +18,7 @@ if (-not $Internal) {
   $fixtureRoot = $null
   $empty = $false
   try {
-    if ($Suite -in @('filesystem-pins', 'provisioner-observation', 'launch-fence', 'provisioner-fence', 'provisioner-bridge', 'provisioner-runner')) {
+    if ($Suite -in @('filesystem-pins', 'provisioner-observation', 'launch-fence', 'provisioner-fence', 'provisioner-bridge', 'provisioner-runner', 'provisioner-pins')) {
       $OwnedFixtureRun = [guid]::NewGuid().ToString('D')
       $pendingRoot = Get-AcpNativeChannelRoot $OwnedFixtureRun
       New-Item -ItemType Directory -Path $pendingRoot | Out-Null
@@ -56,14 +57,15 @@ $testInfo.CreateNoWindow = $true
 $testInfo.RedirectStandardOutput = $true
 $testInfo.RedirectStandardError = $true
 if ($Suite -in @('filesystem', 'filesystem-pins', 'provisioner-observation')) { $testInfo.Environment['ACP_TEST_GIT'] = (Get-Command git -CommandType Application | Select-Object -First 1).Source }
-if ($Suite -in @('filesystem-pins', 'provisioner-observation', 'launch-fence', 'provisioner-fence', 'provisioner-bridge', 'provisioner-runner')) { $testInfo.Environment['ACP_TEST_NATIVE_CHANNEL_ROOT'] = Get-AcpNativeChannelRoot $OwnedFixtureRun }
-if ($Suite -eq 'provisioner-runner') { $testInfo.Environment['ACP_TEST_PWSH'] = (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source }
+if ($Suite -in @('filesystem-pins', 'provisioner-observation', 'launch-fence', 'provisioner-fence', 'provisioner-bridge', 'provisioner-runner', 'provisioner-pins')) { $testInfo.Environment['ACP_TEST_NATIVE_CHANNEL_ROOT'] = Get-AcpNativeChannelRoot $OwnedFixtureRun }
+if ($Suite -in @('provisioner-runner', 'provisioner-pins')) { $testInfo.Environment['ACP_TEST_PWSH'] = (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source }
 $testFile = switch ($Suite) {
   'launch-fence' { 'apps/worker/test/integration/windows-launch-fence.test.ts' }
   'provisioner-fence' { 'apps/worker/test/integration/windows-provisioner-fence.test.ts' }
   'provisioner-admission' { 'apps/worker/test/integration/windows-provisioner-admission.test.ts' }
   'provisioner-bridge' { 'apps/worker/test/integration/windows-provisioner-bridge.test.ts' }
   'provisioner-runner' { 'apps/worker/test/integration/windows-provisioner-runner.test.ts' }
+  'provisioner-pins' { 'apps/worker/test/integration/windows-provisioner-binding-pins.test.ts' }
   'filesystem' { 'apps/worker/test/integration/windows-filesystem.test.ts' }
   'filesystem-pins' { 'apps/worker/test/integration/windows-linked-worktree-pins.test.ts' }
   'provisioner-observation' { 'apps/worker/test/integration/windows-provisioner-observation.test.ts' }

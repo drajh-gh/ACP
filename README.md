@@ -320,6 +320,12 @@ then substitute `native-lost-ack` and `native-hold-invalidated`. These use actua
 PostgreSQL admission and Windows ownership with a fixed non-mutating capsule;
 they preserve target holds and do not enable production provisioning. See
 [the stored-plan executor contract](docs/architecture/0031-stored-plan-provisioner-executor.md).
+Standalone `provisioner-pins` phases `^provisioner pins core:` and
+`^provisioner pins rejection:` run sequentially through
+`scripts/check-worker-supervision.ps1`. They check actual parent/common-Git
+identity and ordinary rename/delete exclusion, not target absence, Git-content
+stability, in-place metadata protection, restricted access or writer-stop ordering.
+See [the identity-only pin contract](docs/architecture/0032-provisioner-binding-identity-pins.md).
 The three `FilesystemLeaseChannelNative` phases are focused, model-free real
 database/native lifecycle checks. Each applies the seeded schema through 0014,
 then runs only its selected scenario; predecessor suites remain separate gates.
