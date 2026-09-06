@@ -351,6 +351,35 @@ technical operation/resource enforcement from these observations.
 
 ## Verification
 
+### Native-only provisioner fence
+
+`describeWindowsProvisionerFence` and `sealWindowsProvisionerAttempt` observe and
+permanently seal the distinct `wpa_` / `.provision` / `ACP.Provisioner` namespace.
+The native core retains exact directory, OS scope and optional PID/FILETIME
+identity. Sealing precedes exact owned-tree stop or bounded absence observation;
+an unknown live unrecorded job remains unconfirmed. There is no production
+provisioner launcher, database journal/GO acknowledgement, plan renewal, release,
+conversion or Git write. Native observations cannot be submitted as invented
+worker stop receipts. See [ADR0022](../../docs/architecture/0022-native-provisioner-fence.md).
+
+Run the two bounded phases sequentially:
+
+```powershell
+pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite provisioner-fence -TestNamePattern '^provisioner core:'
+pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite provisioner-fence -TestNamePattern '^provisioner safety:'
+pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite launch-fence -TestNamePattern '^(sealing a never|a consumed|a permanent|explicit termination|tree closure)'
+pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite launch-fence -TestNamePattern '^(a crash|recovery cannot|sealing a running|wrong scope)'
+pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite launch-fence -TestNamePattern '^(malformed|recreated|pure launch|held permanent)'
+```
+
+Only test helpers create synthetic processes. The shared worker fence regression
+is required in all three positive-filter phases above; selected provisioner tests
+do not replace it. The unfiltered worker suite can exceed its unchanged time bound.
+All reported PIDs and
+the enclosing owned native job must exit before the UUID fixture is removed.
+
+### Existing worker and database gates
+
 `scripts/check-postgres.ps1` applies all eleven ACP migrations, tests real DBOS
 host queues and supervised admission (including a native synthetic runner on
 Windows), kills a journaled native owner and recovers its durable state, reverses
@@ -366,7 +395,7 @@ fabricated process identities, not native process-stop evidence.
 `npm run test:worker-supervision` separately tests native process-tree ownership,
 deadlines, daemon loss, blocked pipes, exact recovery, namespace/identity denial,
 and aborted-inspector cleanup without model credentials or a database.
-`pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite launch-fence`
+The three `launch-fence` phases above
 separately tests permanent creation/resume fencing, consumed-ID replay, a real
 killed helper between CreateProcess and root journaling, exact unjournaled tree
 stop, Unicode paths, scope/directory substitution, partial records and hard links.

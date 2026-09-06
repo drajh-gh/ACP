@@ -36,16 +36,33 @@ public sealed class WindowsLaunchFence : IDisposable
     public static WindowsLaunchFence Open(string directory, string expectedDirectoryIdentity,
         string workerProcessId, string machine, string boot, int session, int timeoutMs)
     {
-        if (!Regex.IsMatch(workerProcessId, "^wpr_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
-            || !Regex.IsMatch(machine, "^[0-9a-f]{64}$") || session < 0 || timeoutMs < 1 || timeoutMs > 5000)
+        if (!Regex.IsMatch(workerProcessId, @"^wpr_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z"))
             throw new ArgumentException("invalid launch fence identity");
+        return OpenExact(directory, expectedDirectoryIdentity, workerProcessId, machine, boot, session, timeoutMs, Magic, ".launch");
+    }
+
+    // Native exclusion only. This does not authorize provisioning, certify a DB plan, or replace its stop journal.
+    public static WindowsLaunchFence OpenProvisioner(string directory, string expectedDirectoryIdentity,
+        string attemptId, string machine, string boot, int session, int timeoutMs)
+    {
+        if (!Regex.IsMatch(attemptId, @"^wpa_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z"))
+            throw new ArgumentException("invalid provisioner fence identity");
+        return OpenExact(directory, expectedDirectoryIdentity, attemptId, machine, boot, session, timeoutMs,
+            "ACP-PROVISIONER-FENCE-1", ".provision");
+    }
+
+    private static WindowsLaunchFence OpenExact(string directory, string expectedDirectoryIdentity,
+        string identity, string machine, string boot, int session, int timeoutMs, string magic, string suffix)
+    {
+        if (!Regex.IsMatch(machine, @"^[0-9a-f]{64}\z") || session < 0 || timeoutMs < 1 || timeoutMs > 5000)
+            throw new ArgumentException("invalid launch fence scope");
         string canonicalBoot = DateTimeOffset.Parse(boot, CultureInfo.InvariantCulture).UtcDateTime.ToString("O");
         var fence = new WindowsLaunchFence();
         try
         {
             fence.directoryHandle = OpenDirectory(directory);
             if (fence.directoryHandle.Identity != expectedDirectoryIdentity) throw new InvalidOperationException("launch fence directory identity changed");
-            string path = Path.Combine(Path.GetFullPath(directory), workerProcessId + ".launch");
+            string path = Path.Combine(Path.GetFullPath(directory), identity + suffix);
             var elapsed = Stopwatch.StartNew();
             while (true)
             {
@@ -68,7 +85,7 @@ public sealed class WindowsLaunchFence : IDisposable
                 if (elapsed.ElapsedMilliseconds >= timeoutMs) throw new TimeoutException("launch fence busy");
                 Thread.Sleep(10);
             }
-            fence.header = string.Join("\n", Magic, workerProcessId, machine, canonicalBoot,
+            fence.header = string.Join("\n", magic, identity, machine, canonicalBoot,
                 session.ToString(CultureInfo.InvariantCulture)) + "\n";
             fence.Read();
             return fence;

@@ -2,6 +2,9 @@
 
 Status: Accepted storage-only M2 prerequisite, migration 0016. No provisioner,
 native fence, process launch, Git mutation or worker admission is enabled.
+The standalone native fence was subsequently added separately in
+[ADR0022](0022-native-provisioner-fence.md); it does not consume these plans or
+add their missing database process/stop protocol.
 
 ## Preserve an attempt before any native creation
 

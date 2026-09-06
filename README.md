@@ -80,6 +80,9 @@ deployed autonomous service.
 - standalone read-only native provisioner preflight for exact parent identity,
   full commit and bounded branch/target absence; no retained reservation,
   database-plan consumer or permission to modify Git is implied
+- a standalone permanent native provisioner fence with separate `wpa_` records
+  and exact owned-tree seal/stop observations; no provisioner launcher, database
+  stop receipt, plan consumer, release or Git mutation is enabled
 - immutable node-context revisions and identity-only, transactionally assembled
   context packets, with current-reference checks, exact retry/deadline admission,
   and cancellation fencing
@@ -166,7 +169,9 @@ pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery 
 pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery -FilesystemBindings -FilesystemLeases -WorktreeReservations regression
 npm run test:dbos-recovery
 npm run test:worker-supervision
-pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite launch-fence
+pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite launch-fence -TestNamePattern '^(sealing a never|a consumed|a permanent|explicit termination|tree closure)'
+pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite launch-fence -TestNamePattern '^(a crash|recovery cannot|sealing a running|wrong scope)'
+pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite launch-fence -TestNamePattern '^(malformed|recreated|pure launch|held permanent)'
 pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite filesystem
 pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite filesystem-pins
 pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite provisioner-observation -TestNamePattern '^preflight (core|paths|branches):'
@@ -290,6 +295,10 @@ Git fixtures, checking actual parent/base/absence, case/prefix conflicts, bounde
 metadata, deterministic between-check mutations and process/pin cleanup. The
 suite requires a bounded `TestNamePattern`; it is not connected to database
 plans or creation. See [the observation contract](docs/architecture/0018-provisioner-target-observation.md).
+The `provisioner-fence` suite requires the exact `^provisioner core:` or
+`^provisioner safety:` phase. Run both sequentially and all three `launch-fence`
+regression phases above; these exercise native one-shot sealing and synthetic tree cleanup,
+not a database-bound provisioner lifecycle. See [the native fence contract](docs/architecture/0022-native-provisioner-fence.md).
 The three `FilesystemLeaseChannelNative` phases are focused, model-free real
 database/native lifecycle checks. Each applies the seeded schema through 0014,
 then runs only its selected scenario; predecessor suites remain separate gates.
