@@ -17,7 +17,7 @@ param(
   [string]$CounterpartStatus,
   [ValidateSet('core', 'races', 'http')]
   [string]$CounterpartSessions,
-  [ValidateSet('core', 'races', 'references', 'snapshot', 'upgrade', 'http')]
+  [ValidateSet('core', 'races', 'references', 'snapshot', 'upgrade', 'http', 'source-core', 'source-races', 'source-upgrade')]
   [string]$AttentionQueue,
   [ValidateSet('core', 'races', 'expiry', 'upgrade', 'regression')]
   [string]$ProvisionerPlans,
@@ -419,7 +419,10 @@ try {
       foreach ($migration in @('0015_worktree_target_holds.sql','0016_worktree_provisioner_attempts.sql','0017_capability_readiness.sql','0018_project_profile_proposals.sql','0019_provisioner_process_journal.sql','0020_windows_native_root_claims.sql','0021_provisioner_admissions.sql','0022_attention_items.sql')) {
         Invoke-AcpSqlFile ('packages/storage/migrations/' + $migration) ('Attention prerequisite: ' + $migration)
       }
-      if ($AttentionQueue -eq 'http') {
+      if ($AttentionQueue.StartsWith('source-')) {
+        Invoke-AcpSqlFile 'packages/storage/migrations/0023_unknown_outcome_attention.sql' '0023 receipt-bound unknown-outcome attention'
+        Invoke-AcpNodeCheck 'packages/storage/test/integration/unknown-outcome-attention.ts' 'Unknown-outcome attention source capture' $AttentionQueue.Substring(7) -TimeoutSeconds 30
+      } elseif ($AttentionQueue -eq 'http') {
         Invoke-AcpNodeCheck 'apps/control-api/test/integration/attention.ts' 'Recorded attention PostgreSQL/HTTP integration' -TimeoutSeconds 30
       } else {
         Invoke-AcpNodeCheck 'packages/storage/test/integration/attention.ts' 'Recorded attention integration' $AttentionQueue -TimeoutSeconds 30

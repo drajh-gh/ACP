@@ -47,3 +47,4 @@ explain how its fixed technology choices shape the repository.
 | [0035](0035-counterpart-mission-response-boundary.md) | Bounded mission responses and uncertain creation |
 | [0036](0036-stopped-provisioner-worktree-observation.md) | Read-only stopped worktree observation |
 | [0037](0037-recorded-attention-queue.md) | Recorded attention, distinct from decisions and notifications |
+| [0038](0038-unknown-outcome-attention-capture.md) | Private receipt-bound unknown-outcome attention capture |

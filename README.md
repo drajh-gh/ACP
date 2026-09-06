@@ -19,6 +19,10 @@ deployed autonomous service.
   queue reads through authenticated `get_mission_attention`; disclosure includes
   indirect preview evidence and pagination lookahead, with no decisions,
   notifications, public writer or readiness inference
+- private exact-receipt unknown-outcome attention capture with immutable source
+  attribution, fixed historical descriptions and exact lost-COMMIT replay;
+  attention failure cannot erase the original receipt, and no scanner, effect
+  retry, notification or resolution is enabled
 - an additive recorded readiness matrix with exact profile/resource identity,
   microsecond expiry, persistent revocation semantics, immutable assessment/evidence
   pins and bounded single-snapshot reads exposed through authenticated read-only
