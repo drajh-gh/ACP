@@ -30,3 +30,4 @@ explain how its fixed technology choices shape the repository.
 | [0018](0018-provisioner-target-observation.md) | Standalone native provisioner target observations |
 | [0019](0019-recorded-capability-readiness.md) | Exact recorded capability readiness |
 | [0020](0020-inert-profile-proposals.md) | Inert whole-profile proposals and exact review requests |
+| [0021](0021-retained-profile-proposals.md) | Retained inert profile-proposal history |

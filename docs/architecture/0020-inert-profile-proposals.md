@@ -1,7 +1,8 @@
 # 0020 — Inert whole-profile proposals and exact review requests
 
-Status: Accepted M3 domain foundation only. No proposal ledger, discovery I/O,
-operator confirmation receipt, publication or activation is implemented here.
+Status: Accepted M3 domain foundation. [ADR0021](0021-retained-profile-proposals.md)
+adds a private proposal ledger and current read snapshots. Discovery I/O,
+operator confirmation receipts, publication and activation remain unimplemented.
 
 ## Separate proposal and runtime boundaries
 
@@ -91,12 +92,15 @@ remain unchanged; proposed values are not applied limits or new `wfb_` identitie
 ## Exact identity and bounded representation
 
 Every proposal has its own `pfp_` ID, exact project/candidate profile tuple, optional
-same-profile prior version plus digest, optional predecessor proposal ID,
+same-profile prior version plus PostgreSQL storage digest, optional predecessor proposal ID,
 configured producer component/version/artifact digest, and proposed-at timestamp.
 The producer identity avoids requiring profile-bound runtime provenance before a
 first profile exists. It is neither an operator principal nor a verified source
-attestation. Future storage must bind it to its trusted producer, rather than
-accepting it as model-selected authority.
+attestation. Storage binds it to its configured trusted producer, rather than
+accepting it as model-selected authority. `baseProfile.profileDigest` is explicitly
+`acp.jsonb_sha256` of the exact retained baseline JSONB, not the JavaScript canonical
+proposal digest. An independently published version does not establish a current
+profile head; the database has no authoritative head pointer.
 
 The digest covers all metadata, every field/value/gap, evidence pins, derived state
 and explicit `not_evaluated` / `not_authorized` authority markers. Correcting a

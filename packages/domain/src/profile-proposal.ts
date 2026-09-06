@@ -50,12 +50,15 @@ export interface ProfileProposalMetadata {
   readonly proposalId: StableId<"projectProfileProposal">;
   readonly projectId: StableId<"project">;
   readonly candidateProfile: { readonly profileId: StableId<"projectProfile">; readonly profileVersion: string };
+  /** profileDigest is acp.jsonb_sha256 of the exact retained baseline, NOT the proposal's JS canonical digest. */
   readonly baseProfile: { readonly profileId: StableId<"projectProfile">; readonly profileVersion: string; readonly profileDigest: string } | null;
   readonly supersedesProposalId: StableId<"projectProfileProposal"> | null;
   /** Configured producer identity, not an operator principal or evidence-origin attestation. */
   readonly producer: { readonly component: string; readonly version: string; readonly artifactDigest: string };
   readonly proposedAt: string;
 }
+export type ProfileProposalIdentity = Omit<ProfileProposalMetadata, "producer" | "proposedAt">;
+export type ProfileProposalProducer = ProfileProposalMetadata["producer"];
 const authority = { assessment: "not_evaluated", publication: "not_authorized", activation: "not_authorized" } as const;
 export interface ProjectProfileProposal extends ProfileProposalMetadata {
   readonly proposalSchemaVersion: typeof profileProposalSchemaVersion;
@@ -75,13 +78,8 @@ const unavailableRequest = "Profile confirmation request is unavailable; no part
 export function buildProjectProfileProposal(metadataValue: unknown, discoveredFields: unknown, evidencePinsValue: unknown): ProjectProfileProposal {
   try {
     const metadata = parseMetadata(metadataValue);
-    const selected = expectRecord(discoveredFields, "discovered profile fields");
-    expectOnlyKeys(selected, profileFieldIds, "discovered profile fields");
-    const fields = Object.fromEntries(profileFieldIds.map(id => [id, Object.hasOwn(selected, id) ? parseField(id, selected[id]) : {
-      status: "missing" as const, reason: "This required information has not been discovered.", question: `What is the intended value for ${id}?`,
-    }])) as Record<ProfileFieldId, ProfileProposalField>;
-    validateCredentialReferences(fields);
-    const referenced = new Set(Object.values(fields).flatMap(field => fieldEvidenceIds(field)));
+    const { fields, evidenceIds: referencedIds } = prepareProfileProposalFields(discoveredFields);
+    const referenced = new Set(referencedIds);
     const evidencePins = boundedArray(evidencePinsValue, 1240).map(value => parsePin(value, metadata.projectId)).sort(compareEvidenceIds);
     if (new Set(evidencePins.map(pin => pin.evidenceId)).size !== evidencePins.length || evidencePins.length !== referenced.size
       || evidencePins.some(pin => !referenced.has(pin.evidenceId))) throw new Error(invalidProposal);
@@ -155,6 +153,33 @@ export function buildProfileConfirmationRequest(proposalValue: unknown, currentS
 function parseMetadata(value: unknown): ProfileProposalMetadata {
   const input = expectRecord(value, "profile proposal metadata");
   expectOnlyKeys(input, metadataFields, "profile proposal metadata");
+  const { producer, proposedAt, ...identity } = input;
+  return { ...parseProfileProposalIdentity(identity), producer: parseProfileProposalProducer(producer), proposedAt: parseCanonicalTimestamp(proposedAt) };
+}
+
+/** Pure normalization for trusted producers before they acquire a database connection. */
+export function prepareProfileProposalFields(value: unknown) {
+  const selected = expectRecord(value, "discovered profile fields");
+  expectOnlyKeys(selected, profileFieldIds, "discovered profile fields");
+  const fields = Object.fromEntries(profileFieldIds.map(id => [id, Object.hasOwn(selected, id) ? parseField(id, selected[id]) : {
+    status: "missing" as const, reason: "This required information has not been discovered.", question: `What is the intended value for ${id}?`,
+  }])) as Record<ProfileFieldId, ProfileProposalField>;
+  validateCredentialReferences(fields);
+  assertSize(fields, profileProposalMaximumBytes);
+  const ids = [...new Set(Object.values(fields).flatMap(field => fieldEvidenceIds(field)))].sort();
+  if (ids.length > 1240) throw new Error(invalidProposal);
+  return { fields, evidenceIds: ids };
+}
+
+export function parseProfileProposalProducer(value: unknown): ProfileProposalProducer {
+  const producer = expectRecord(value, "profile producer");
+  expectOnlyKeys(producer, ["component", "version", "artifactDigest"], "profile producer");
+  return { component: text(producer.component, 200), version: text(producer.version, 200), artifactDigest: parseDigest(producer.artifactDigest) };
+}
+
+export function parseProfileProposalIdentity(value: unknown): ProfileProposalIdentity {
+  const input = expectRecord(value, "profile proposal identity");
+  expectOnlyKeys(input, ["proposalId", "projectId", "candidateProfile", "baseProfile", "supersedesProposalId"], "profile proposal identity");
   const proposalId = parseStableId(input.proposalId, "projectProfileProposal");
   const candidateProfile = parseProfileReference(input.candidateProfile);
   let baseProfile: ProfileProposalMetadata["baseProfile"] = null;
@@ -166,11 +191,7 @@ function parseMetadata(value: unknown): ProfileProposalMetadata {
   }
   const supersedesProposalId = input.supersedesProposalId === null ? null : parseStableId(input.supersedesProposalId, "projectProfileProposal");
   if (supersedesProposalId === proposalId) throw new Error(invalidProposal);
-  const producer = expectRecord(input.producer, "profile producer");
-  expectOnlyKeys(producer, ["component", "version", "artifactDigest"], "profile producer");
-  return { proposalId, projectId: parseStableId(input.projectId, "project"), candidateProfile, baseProfile, supersedesProposalId,
-    producer: { component: text(producer.component, 200), version: text(producer.version, 200), artifactDigest: parseDigest(producer.artifactDigest) },
-    proposedAt: parseCanonicalTimestamp(input.proposedAt) };
+  return { proposalId, projectId: parseStableId(input.projectId, "project"), candidateProfile, baseProfile, supersedesProposalId };
 }
 
 function parseProfileReference(value: unknown) {

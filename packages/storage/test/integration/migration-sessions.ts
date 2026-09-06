@@ -95,11 +95,11 @@ try {
   } finally { incumbent.release(true); await Promise.allSettled(pending); }
   const actualMigrations=fileURLToPath(new URL("../../migrations",import.meta.url));
   const applied=await applyMigrations(pool,actualMigrations);
-  assert.equal(applied.applied.length,17); assert.equal(applied.alreadyApplied.length,0);
+  assert.equal(applied.applied.length,18); assert.equal(applied.alreadyApplied.length,0);
   assert.deepEqual(await applyMigrations(pool,actualMigrations),{ applied:[],alreadyApplied:applied.applied });
   assert.deepEqual(await rollbackMigrations(pool,actualMigrations),[...applied.applied].reverse());
   assert.equal((await pool.query("SELECT to_regnamespace('acp') IS NULL AS absent")).rows[0].absent,true);
-  checks++; process.stdout.write("PASS migration session: all 17 actual migrations apply, checksum-replay and reverse on an empty database\n");
+  checks++; process.stdout.write("PASS migration session: all 18 actual migrations apply, checksum-replay and reverse on an empty database\n");
   process.stdout.write(`Migration session integration: ${checks} checks passed.\n`);
 } finally {
   await pool.end();

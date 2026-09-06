@@ -19,7 +19,7 @@ deployed autonomous service.
   pins and bounded single-snapshot reads exposed through authenticated read-only
   `get_project_readiness`; no live probes or readiness writer are exposed
 - an inert 62-field whole-profile proposal contract with explicit discovery gaps,
-  conflicts and exact review-request digests; no profile publication or operator
+  immutable correction/evidence history and exact current review-request digests; no profile publication or operator
   confirmation is inferred
 - deterministic effect-transition, approval-drift, cursor, and kill-switch
   guards
@@ -245,6 +245,12 @@ sequentially under 0017. The `http` phase verifies the actual MCP route over loo
 using a disposable read-only database role, including whole-error disclosure and
 identity drift. No live probes, readiness MCP writer or execution authority
 is enabled. See [the readiness contract](docs/architecture/0019-recorded-capability-readiness.md).
+The standalone `ProfileProposals` phases (`core`, `races`, `references`, `snapshot`,
+`upgrade`, `regression`) apply seeded PostgreSQL through 0018. Run one phase with
+`pwsh -NoProfile -File scripts/check-postgres.ps1 -ProfileProposals core`. They check
+inert proposal history, exact retries, socket-loss recovery, evidence disclosure,
+MVCC consistency and history-preserving downgrade. No operator confirmation,
+publication or activation is enabled. See [the proposal ledger contract](docs/architecture/0021-retained-profile-proposals.md).
 The two `provisioner-observation` phases run sequentially in disposable native
 Git fixtures, checking actual parent/base/absence, case/prefix conflicts, bounded
 metadata, deterministic between-check mutations and process/pin cleanup. The

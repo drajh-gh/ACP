@@ -21,3 +21,4 @@ export * from "./worktree-reservation-store.ts";
 export * from "./worktree-provisioner-attempt.ts";
 export * from "./worktree-provisioner-store.ts";
 export * from "./readiness-store.ts";
+export * from "./profile-proposal-store.ts";

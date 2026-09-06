@@ -18,6 +18,8 @@ param(
   [string]$ProvisionerPlans,
   [ValidateSet('core', 'races', 'expiry', 'limits', 'snapshot', 'upgrade', 'regression', 'http')]
   [string]$Readiness,
+  [ValidateSet('core', 'races', 'references', 'snapshot', 'upgrade', 'regression')]
+  [string]$ProfileProposals,
   [switch]$MigrationSessions,
   [Parameter(DontShow)]
   [switch]$Internal,
@@ -39,6 +41,7 @@ if ($MigrationSessions -and ($LifecycleOnly -or $HostOnly -or $LaunchRecovery -o
 if ($CounterpartStatus -and ($LifecycleOnly -or $HostOnly -or $LaunchRecovery -or $LaunchNative -or $FilesystemBindings -or $FilesystemNative -or $FilesystemLeases -or $FilesystemLeaseNative -or $FilesystemLeaseChannelNative -or $WorktreeReservations -or $MigrationSessions)) { throw 'CounterpartStatus is a standalone bounded gate' }
 if ($ProvisionerPlans -and ($LifecycleOnly -or $HostOnly -or $LaunchRecovery -or $LaunchNative -or $FilesystemBindings -or $FilesystemNative -or $FilesystemLeases -or $FilesystemLeaseNative -or $FilesystemLeaseChannelNative -or $WorktreeReservations -or $MigrationSessions -or $CounterpartStatus)) { throw 'ProvisionerPlans is a standalone bounded gate' }
 if ($Readiness -and ($LifecycleOnly -or $HostOnly -or $LaunchRecovery -or $LaunchNative -or $FilesystemBindings -or $FilesystemNative -or $FilesystemLeases -or $FilesystemLeaseNative -or $FilesystemLeaseChannelNative -or $WorktreeReservations -or $MigrationSessions -or $CounterpartStatus -or $ProvisionerPlans)) { throw 'Readiness is a standalone bounded gate' }
+if ($ProfileProposals -and ($LifecycleOnly -or $HostOnly -or $LaunchRecovery -or $LaunchNative -or $FilesystemBindings -or $FilesystemNative -or $FilesystemLeases -or $FilesystemLeaseNative -or $FilesystemLeaseChannelNative -or $WorktreeReservations -or $MigrationSessions -or $CounterpartStatus -or $ProvisionerPlans -or $Readiness)) { throw 'ProfileProposals is a standalone bounded gate' }
 
 . (Join-Path $PSScriptRoot 'native-channel-fixture.ps1')
 
@@ -119,6 +122,7 @@ if (-not $Internal) {
   if ($CounterpartStatus) { $commandLine += ' -CounterpartStatus ' + $CounterpartStatus }
   if ($ProvisionerPlans) { $commandLine += ' -ProvisionerPlans ' + $ProvisionerPlans }
   if ($Readiness) { $commandLine += ' -Readiness ' + $Readiness }
+  if ($ProfileProposals) { $commandLine += ' -ProfileProposals ' + $ProfileProposals }
   if ($MigrationSessions) { $commandLine += ' -MigrationSessions' }
   $integrationProcess = $null
   $channelRoot = $null
@@ -357,13 +361,26 @@ try {
     Write-Host 'Migration session integration passed; removing only the owned disposable database container.'
     return
   }
-  if ($FilesystemLeaseChannelNative -or $WorktreeReservations -or $CounterpartStatus -or $ProvisionerPlans -or $Readiness) {
+  if ($FilesystemLeaseChannelNative -or $WorktreeReservations -or $CounterpartStatus -or $ProvisionerPlans -or $Readiness -or $ProfileProposals) {
     # Focused real database/native phases apply the same seeded schema directly.
     # Unrelated predecessor suites cannot consume their bounded child's budget.
     foreach ($migration in @('0006_host_dispatch.sql', '0007_supervised_workers.sql', '0008_worker_recovery.sql',
         '0009_lifecycle_context.sql', '0010_worker_handoff.sql', '0011_worker_launch_intents.sql',
         '0012_worker_launch_recovery.sql', '0013_filesystem_bindings.sql', '0014_filesystem_writer_leases.sql')) {
       Invoke-AcpSqlFile ('packages/storage/migrations/' + $migration) ('Focused prerequisite schema: ' + $migration)
+    }
+    if ($ProfileProposals) {
+      foreach ($migration in @('0015_worktree_target_holds.sql','0016_worktree_provisioner_attempts.sql','0017_capability_readiness.sql','0018_project_profile_proposals.sql')) {
+        Invoke-AcpSqlFile ('packages/storage/migrations/' + $migration) ('Profile proposal schema: ' + $migration)
+      }
+      if ($ProfileProposals -eq 'regression') {
+        Invoke-AcpNodeCheck 'packages/storage/test/integration/readiness.ts' 'Readiness regression under 0018' 'core' -TimeoutSeconds 30
+        Invoke-AcpNodeCheck 'apps/control-api/test/integration/readiness.ts' 'Read-only readiness HTTP regression under 0018' -TimeoutSeconds 30
+      } else {
+        Invoke-AcpNodeCheck 'packages/storage/test/integration/profile-proposals.ts' 'Inert profile proposal integration' $ProfileProposals -TimeoutSeconds 30
+      }
+      Write-Host 'Focused inert profile proposals passed; no operator confirmation or activation enabled.'
+      return
     }
     if ($Readiness) {
       Invoke-AcpSqlFile 'packages/storage/migrations/0015_worktree_target_holds.sql' 'Readiness prerequisite: 0015 target holds'
