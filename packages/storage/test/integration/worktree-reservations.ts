@@ -44,10 +44,17 @@ try {
     return { s,tree,input:{ leaseId:createStableId("lease"),runId:s.start.runId,workerProcessId:s.registration.workerProcessId,
       worktreeBindingId:id,provenanceId:s.a.packetProvenanceId } };
   }
-  function intercepted(mode:"lost_commit"|"close_before_commit"|"expire_before_commit",reservationId?:string) {
+  function intercepted(mode:"lost_commit"|"close_before_commit"|"expire_before_commit",reservationId?:string,
+    evidence?:{ releases:(Error|boolean|undefined)[];ended:Promise<void>[];pids:number[] }) {
     return new PostgresWorktreeReservationStore({ options:pool.options,async connect() {
       const client=await pool.connect();
-      return { release:()=>client.release(),async query<R extends QueryResultRow>(text:string,values?:unknown[]):Promise<QueryResult<R>> {
+      if(evidence) {
+        evidence.pids.push(Number((await client.query("SELECT pg_backend_pid() AS pid")).rows[0].pid));
+        evidence.ended.push(new Promise<void>((resolve)=>client.once("end",()=>resolve())));
+      }
+      return { on:client.on.bind(client),off:client.off.bind(client),release:(discard?:Error|boolean)=>{
+        assert.equal(discard,true); assert.ok(client.listenerCount("error")>0); evidence?.releases.push(discard); client.release(discard);
+      },async query<R extends QueryResultRow>(text:string,values?:unknown[]):Promise<QueryResult<R>> {
         if(text==="COMMIT" && mode==="close_before_commit") await client.query("UPDATE acp.worker_host_sessions SET state='closed' WHERE host_identifier=$1",[f.runtime.hostIdentifier]);
         if(text==="COMMIT" && mode==="expire_before_commit") {
           const row=(await client.query("SELECT expires_at FROM acp.worktree_reservations WHERE reservation_id=$1",[reservationId])).rows[0];
@@ -69,6 +76,64 @@ try {
     return (await pool.query("SELECT key FROM acp.filesystem_exclusion_keys WHERE reservation_id=$1 ORDER BY key",[reservationId])).rows;
   }
   if(phase==="core") {
+  await check("killed reservation and heartbeat sessions retain no partial changes and release their exact locks",async()=>{
+    for(const renewing of [false,true]) {
+      const x=await target(),before=renewing ? await holds.reserve(x.input) : undefined;
+      const releases:(Error|boolean|undefined)[]=[],queries:string[]=[];
+      let backendPid=0;
+      const killed=new PostgresWorktreeReservationStore({ options:pool.options,async connect() {
+        const client=await pool.connect();
+        backendPid=Number((await client.query("SELECT pg_backend_pid() AS pid")).rows[0].pid);
+        const failed=new Promise<void>((resolve)=>client.once("error",()=>resolve()));
+        return { on:client.on.bind(client),off:client.off.bind(client),release:(discard?:Error|boolean)=>{ releases.push(discard); client.release(discard); },
+          async query<R extends QueryResultRow>(text:string,values?:unknown[]):Promise<QueryResult<R>> {
+            queries.push(text); const result=await client.query<R>(text,values);
+            if(text.includes("lock_worktree_reservation")) {
+              assert.equal((await pool.query("SELECT pg_terminate_backend($1) AS stopped",[backendPid])).rows[0].stopped,true);
+              await failed;
+            }
+            return result;
+          } };
+      } } as unknown as Pool,f.runtime);
+      await assert.rejects(renewing ? killed.heartbeat(x.input.reservationId) : killed.reserve(x.input),/terminating connection|connection terminated/iu);
+      assert.deepEqual(releases,[true]); assert.equal(queries.length,renewing ? 3 : 2);
+      assert.match(queries.at(-1)!,/lock_worktree_reservation/u);
+      assert.equal((await pool.query("SELECT 1 FROM pg_stat_activity WHERE pid=$1",[backendPid])).rowCount,0);
+      assert.equal((await pool.query("SELECT pg_try_advisory_xact_lock(hashtextextended('acp:filesystem-binding-registration:'||$1,0)) AS acquired",[f.runtime.hostIdentifier])).rows[0].acquired,true);
+      assert.deepEqual(await holds.load(x.input.reservationId),before);
+      assert.equal((await projection(x.input.reservationId)).length,renewing ? 4 : 0);
+      assert.equal((await pool.query("SELECT 1 FROM acp.mission_events WHERE mission_id=$1 AND event_type LIKE 'filesystem.target-%'",[x.input.missionId])).rowCount,renewing ? 1 : 0);
+      const retry=renewing ? await holds.heartbeat(x.input.reservationId) : await holds.reserve(x.input);
+      assert.equal(retry.revision,renewing ? 2 : 1);
+    }
+  });
+  await check("lost real BEGIN response and failed rollback close the reservation transaction and its actual host lock",async()=>{
+    const x=await target(),failure=new Error("synthetic lost reservation BEGIN acknowledgement"),releases:(Error|boolean|undefined)[]=[],queries:string[]=[];
+    let backendPid=0,ended:Promise<void>|undefined;
+    const uncertain=new PostgresWorktreeReservationStore({ options:pool.options,async connect() {
+      const client=await pool.connect();
+      backendPid=Number((await client.query("SELECT pg_backend_pid() AS pid")).rows[0].pid);
+      ended=new Promise<void>((resolve)=>client.once("end",()=>resolve()));
+      return { on:client.on.bind(client),off:client.off.bind(client),release:(discard?:Error|boolean)=>{ releases.push(discard); client.release(discard); },
+        async query<R extends QueryResultRow>(text:string,values?:unknown[]):Promise<QueryResult<R>> {
+          queries.push(text);
+          if(text==="ROLLBACK") throw new Error("synthetic unavailable rollback acknowledgement");
+          const result=await client.query<R>(text,values);
+          if(text==="BEGIN") {
+            await client.query("SELECT acp.lock_worktree_reservation($1,$2,$3,$4)",[x.input.missionId,x.input.nodeId,x.input.repositoryBindingId,f.runtime.hostIdentifier]);
+            throw failure;
+          }
+          return result;
+        } };
+    } } as unknown as Pool,f.runtime);
+    await assert.rejects(uncertain.reserve(x.input),(error)=>error===failure); await ended;
+    assert.deepEqual(releases,[true]); assert.deepEqual(queries,["BEGIN","ROLLBACK"]);
+    assert.equal((await pool.query("SELECT 1 FROM pg_stat_activity WHERE pid=$1",[backendPid])).rowCount,0);
+    assert.equal((await pool.query("SELECT pg_try_advisory_xact_lock(hashtextextended('acp:filesystem-binding-registration:'||$1,0)) AS acquired",[f.runtime.hostIdentifier])).rows[0].acquired,true);
+    assert.equal(await holds.load(x.input.reservationId),undefined); assert.equal((await projection(x.input.reservationId)).length,0);
+    assert.equal((await pool.query("SELECT 1 FROM acp.mission_events WHERE mission_id=$1 AND event_type LIKE 'filesystem.target-%'",[x.input.missionId])).rowCount,0);
+    assert.equal((await holds.reserve(x.input)).revision,1);
+  });
   await check("exact concurrent replay derives target keys without worker runs, launch intents or native workspace identity",async () => {
     const x=await target(),[left,right]=await Promise.all([holds.reserve(x.input),holds.reserve(x.input)]);
     assert.deepEqual(left,right); assert.equal(left.state,"held"); assert.equal(left.revision,1);
@@ -221,7 +286,8 @@ try {
       }
     });
     await check("lost actual commit acknowledgement replays history without duplicating acquisition or renewal",async () => {
-      const x=await target(),lost=intercepted("lost_commit");
+      const evidence={ releases:[] as (Error|boolean|undefined)[],ended:[] as Promise<void>[],pids:[] as number[] };
+      const x=await target(),lost=intercepted("lost_commit",undefined,evidence);
       await assert.rejects(lost.reserve(x.input),/lost commit acknowledgement/u);
       const first=await holds.load(x.input.reservationId); assert.ok(first); assert.equal(first.revision,1);
       assert.deepEqual(await holds.reserve(x.input),first);
@@ -229,6 +295,8 @@ try {
       const second=await holds.load(x.input.reservationId); assert.ok(second); assert.equal(second.revision,2);
       assert.deepEqual(await holds.reserve(x.input),second);
       assert.equal((await pool.query("SELECT 1 FROM acp.mission_events WHERE mission_id=$1 AND event_type LIKE 'filesystem.target-%'",[x.input.missionId])).rowCount,2);
+      await Promise.all(evidence.ended); assert.deepEqual(evidence.releases,[true,true]);
+      assert.equal((await pool.query("SELECT 1 FROM pg_stat_activity WHERE pid=ANY($1::integer[])",[evidence.pids])).rowCount,0);
     });
     await check("deferred authority loss rolls back reserve and renewal including keys and events",async () => {
       const x=await target(),denied=intercepted("close_before_commit");

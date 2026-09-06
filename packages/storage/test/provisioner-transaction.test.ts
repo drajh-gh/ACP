@@ -3,7 +3,7 @@ import { EventEmitter } from "node:events";
 import { it } from "node:test";
 import type { QueryResult, QueryResultRow } from "pg";
 import type { ConnectionPool, TransactionClient } from "../src/database.ts";
-import { withProvisionerPlanTransaction } from "../src/provisioner-transaction.ts";
+import { withIsolatedTransaction } from "../src/isolated-transaction.ts";
 
 class Session extends EventEmitter implements ConnectionPool, TransactionClient {
   readonly queries: string[] = [];
@@ -35,7 +35,7 @@ function discarded(session: Session) {
 }
 it("provisioner transaction physically discards even a successful exact replay session", async () => {
   const session = new Session();
-  const result = await withProvisionerPlanTransaction(session, async (client) => {
+  const result = await withIsolatedTransaction(session, async (client) => {
     await client.query("historical plan"); return "inert history";
   });
   assert.equal(result, "inert history");
@@ -45,7 +45,7 @@ it("provisioner transaction physically discards even a successful exact replay s
 for (const phase of ["BEGIN", "plan statement", "COMMIT"]) {
   it(`provisioner transaction preserves uncertain ${phase} when rollback also fails`, async () => {
     const session = new Session(); session.failAt = phase; session.rollbackFails = true;
-    await assert.rejects(withProvisionerPlanTransaction(session, async (client) => {
+    await assert.rejects(withIsolatedTransaction(session, async (client) => {
       await client.query("plan statement"); return "not confirmed";
     }), (error) => error === session.primary);
     assert.equal(session.queries.at(-1), "ROLLBACK");
@@ -56,7 +56,7 @@ for (const phase of ["BEGIN", "plan statement", "COMMIT"]) {
 for (const phase of ["BEGIN", "plan statement", "COMMIT"]) {
   it(`provisioner transaction denies a successful query response after a physical error during ${phase}`, async () => {
     const session = new Session(); session.emitAt = phase; session.rollbackFails = true;
-    await assert.rejects(withProvisionerPlanTransaction(session, async (client) => {
+    await assert.rejects(withIsolatedTransaction(session, async (client) => {
       await client.query("plan statement"); return "not confirmed";
     }), (error) => error === session.primary);
     assert.equal(session.queries.at(-1), phase);
@@ -66,7 +66,7 @@ for (const phase of ["BEGIN", "plan statement", "COMMIT"]) {
 }
 it("provisioner transaction observes socket loss between statements before issuing COMMIT", async () => {
   const session = new Session();
-  await assert.rejects(withProvisionerPlanTransaction(session, async () => {
+  await assert.rejects(withIsolatedTransaction(session, async () => {
     session.emit("error", session.primary); return "not confirmed";
   }), (error) => error === session.primary);
   assert.deepEqual(session.queries, ["BEGIN"]); discarded(session);

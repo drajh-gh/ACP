@@ -1,6 +1,7 @@
 import { parseStableId, type StableId } from "@acp/domain";
 import type { Pool, QueryResultRow } from "pg";
-import { withTransaction, type QueryExecutor } from "./database.ts";
+import type { QueryExecutor } from "./database.ts";
+import { withIsolatedTransaction } from "./isolated-transaction.ts";
 import { PostgresDispatchStore, type HostRuntimeRegistration } from "./dispatch-store.ts";
 import type { WorkerRecoveryAuthority } from "./worker-recovery-store.ts";
 import { parseWorktreeReservation, type WorktreeReservation, type WorktreeReservationInput } from "./worktree-reservation.ts";
@@ -18,7 +19,7 @@ export class PostgresWorktreeReservationStore {
   }
   async reserve(value:WorktreeReservationInput):Promise<WorktreeReservation> {
     const input=parseWorktreeReservation(value),a=this.authority;
-    return withTransaction(this.pool,async (client) => {
+    return withIsolatedTransaction(this.pool,async (client) => {
       await this.lock(client,input);
       const old=(await client.query("SELECT * FROM acp.worktree_reservation_status WHERE reservation_id=$1",[input.reservationId])).rows[0];
       if(old) {
@@ -44,7 +45,7 @@ export class PostgresWorktreeReservationStore {
   }
   async heartbeat(reservationId:StableId<"worktreeReservation">):Promise<WorktreeReservation> {
     parseStableId(reservationId,"worktreeReservation"); const a=this.authority;
-    return withTransaction(this.pool,async (client) => {
+    return withIsolatedTransaction(this.pool,async (client) => {
       const before=await this.required(client,reservationId); await this.lock(client,before);
       const changed=await client.query(`UPDATE acp.worktree_reservations SET heartbeat_at=clock_timestamp()
         WHERE reservation_id=$1 AND host_identifier=$2 AND owner_session_id=$3 AND application_version=$4 RETURNING reservation_id`,

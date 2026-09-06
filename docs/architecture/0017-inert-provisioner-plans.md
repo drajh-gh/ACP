@@ -67,8 +67,9 @@ historical replay, before removing its error listener. Lost COMMIT acknowledgeme
 remains an uncertain result, not evidence of absence: the caller may retry only
 the exact immutable plan identity and terms through the existing historical path.
 There is no automatic re-admission, retry loop, deadline renewal or native launch.
-Read-only inventory stays a single pool query. This change is isolated to the
-provisioner store; other users of the generic transaction helper are unchanged.
+Read-only inventory stays a single pool query. The unchanged protocol now lives
+in `withIsolatedTransaction`, shared by explicit opt-in with target reservation
+and heartbeat operations (ADR0015). Other generic transaction users are unchanged.
 
 `planned` means only that the retained record still matches its captured hold
 revision and original live owner/deadline. A later heartbeat, expiry, admission,

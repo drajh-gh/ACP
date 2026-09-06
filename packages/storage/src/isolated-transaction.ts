@@ -1,8 +1,8 @@
 import type { QueryResult, QueryResultRow } from "pg";
 import type { ConnectionPool, QueryExecutor } from "./database.ts";
 
-/** Private inert-plan transaction boundary, not execution or retry authority. */
-export async function withProvisionerPlanTransaction<T>(
+/** Opt-in physical-session containment. Never replays callbacks or resolves uncertain COMMITs. */
+export async function withIsolatedTransaction<T>(
   pool: ConnectionPool,
   action: (client: QueryExecutor) => Promise<T>,
 ): Promise<T> {
@@ -28,7 +28,7 @@ export async function withProvisionerPlanTransaction<T>(
     throw error;
   } finally {
     // Preserve the error listener until physical discard, including on success.
-    // A lost COMMIT remains uncertain; only a caller's exact immutable retry can converge.
+    // A lost COMMIT remains uncertain. In particular, never retry a heartbeat here.
     try { physical.release(true); } finally { physical.off?.("error", failed); }
   }
 }

@@ -57,11 +57,23 @@ and grant expiry. Renewal requires the original dispatch generation and runtime,
 and an already expired hold cannot renew. Mission/node/dispatch/assignment locks
 precede runtime and repository locks; commit rechecks authority and time.
 
-Exact replay returns retained history without renewal. Lost COMMIT responses are
-resolved by that identity, not another acquisition. `held` and `recovering` are
+Exact reserve replay returns retained history without renewal. An uncertain
+acquisition can be reconciled by that identity, not another acquisition. An
+uncertain heartbeat is never automatically repeated or returned as a successful
+fresh acknowledgement: even if its COMMIT applied, the call rejects. A later
+historical reserve/load observes its revision without renewing it. `held` and `recovering` are
 read-time projections; cancellation, retirement, worker admission, generation
 change, runtime replacement or expiry preserves all keys. Recovery inventory is
 host-scoped, bounded and keyset-paged. Reading an item grants no reclamation right.
+
+Both `reserve` and `heartbeat` use the opt-in `withIsolatedTransaction` boundary,
+shared with inert provisioner planning. It captures checked-out socket errors,
+checks the sticky failure before and after queries, preserves the original error
+if rollback fails, and discards the physical client on every outcome while its
+error listener remains installed. It never retries a callback or replaces a lost
+heartbeat acknowledgement with readback. Read-only inventory remains outside this
+transaction wrapper. Generic transactions and active filesystem-writer renewal
+are not changed by this opt-in.
 
 ## Boundaries still to implement
 
