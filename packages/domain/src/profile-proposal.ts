@@ -106,6 +106,27 @@ export function parseCurrentProfileDiscoveryEvidence(value: unknown, queryValue:
   return { ...query, contentHash: input.contentHash, expectedPin };
 }
 
+export const profileDiscoveryEvidenceMaximumSources = 5;
+export function parseProfileDiscoveryEvidenceBatchQuery(value: unknown) {
+  const input = expectRecord(value, "exact discovery evidence batch query");
+  expectOnlyKeys(input, ["projectId", "evidenceIds"], "exact discovery evidence batch query");
+  const projectId = parseStableId(input.projectId, "project");
+  const evidenceIds = boundedArray(input.evidenceIds, profileDiscoveryEvidenceMaximumSources, 1).map(id => parseStableId(id, "evidence")).sort();
+  if (new Set(evidenceIds).size !== evidenceIds.length) throw new Error("Duplicate discovery evidence.");
+  return { projectId, evidenceIds };
+}
+
+/** Complete same-project descriptor set, not proof that the descriptors came from one trusted snapshot. */
+export function parseCurrentProfileDiscoveryEvidenceBatch(value: unknown, queryValue: unknown) {
+  const query = parseProfileDiscoveryEvidenceBatchQuery(queryValue);
+  const sources = boundedArray(value, profileDiscoveryEvidenceMaximumSources, 1).map(value => {
+    const input = expectRecord(value, "current discovery evidence");
+    return parseCurrentProfileDiscoveryEvidence(input, { projectId: query.projectId, evidenceId: input.evidenceId });
+  }).sort(compareEvidenceIds);
+  if (sources.length !== query.evidenceIds.length || sources.some((source, index) => source.evidenceId !== query.evidenceIds[index])) throw new Error("Incomplete discovery evidence set.");
+  return sources;
+}
+
 /** Pure assembly from selected, already-redacted discovery results; it performs no discovery I/O or authorization. */
 export function buildProjectProfileProposal(metadataValue: unknown, discoveredFields: unknown, evidencePinsValue: unknown): ProjectProfileProposal {
   try {

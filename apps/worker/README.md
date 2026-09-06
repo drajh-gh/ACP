@@ -82,6 +82,43 @@ runs the six static fixture checks plus eight coordinator/descriptor checks agai
 owned PostgreSQL, including current-source drift, no-write outcomes, historical
 ID reuse and actual lost-COMMIT recovery/uncertainty.
 
+## Multi-source manifest composition
+
+`recordNpmManifestDiscoveries` accepts exact proposal identity and
+`sources: [{ evidenceId, bytes }]`. This is selected-source composition, not
+repository discovery: no repository/path identity or acquisition is supplied.
+One to five unique evidence IDs are accepted; sparse/decorated lists and extra
+source properties reject. Every intrinsic byte view is copied before the first
+await. Each source retains the 262,144-byte bound, with 1,048,576 bytes total.
+
+`getCurrentDiscoveryEvidenceBatch` reads the entire exact same-project descriptor
+set in one bounded SQL statement and MVCC snapshot. Missing, invalid, restricted,
+unusable or substituted sources reject the whole set. Sources and descriptors
+are canonically associated by evidence ID, not caller order. Every owned copy
+must hash and parse successfully before any proposal write is possible. One failed
+manifest produces one whole `manifest_unconfirmed` no-write outcome; all-empty
+reports produce `no_relevant_declarations` with no write.
+
+Nonempty observations are reduced together. Equal reports merge evidence,
+different reports remain unresolved alternatives, and independent categories
+remain separate. There is one final pinned write with exactly the nonempty
+contributor union (at most five), not one draft per source. Input ordering cannot
+select a winner or change the retained proposal.
+
+Empty sources pass the current descriptor/byte check but contribute no retained
+fact or pin. They are **not locked or rechecked through commit**, retained as
+negative coverage, or included in historical replay identity. Adding or changing
+an empty contributor can therefore replay identical attributed history. If it
+later gains relevant declarations, fields/pins change and the old proposal ID
+cannot alias those new terms. This is not an atomic complete-scan receipt.
+Only nonempty contributors are lock-rechecked and retained by the writer.
+The single-source helper and its uncertainty/authority boundaries are unchanged.
+
+`pwsh -NoProfile -File scripts/check-postgres.ps1 -ProfileProposals batch-manifest`
+includes the static and single-source checks, then verifies multi-source merging,
+conflicts, whole failure, contributor drift, empty-source semantics and a paused
+single SELECT across a concurrent evidence transaction.
+
 ## Host-aware execution
 
 The optional fourth argument to `launchWorker` is a `HostDispatchRuntime` built

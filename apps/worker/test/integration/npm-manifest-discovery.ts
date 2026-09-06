@@ -5,10 +5,10 @@ import { Pool } from "pg";
 import { canonicalJsonDigest, createStableId, type StableId, type ProfileProposalIdentity } from "@acp/domain";
 import { getProjectProfileProposal, getProfileConfirmationRequest, PostgresProfileProposalStore } from "@acp/storage";
 import { discoverNpmPackageManifest } from "../../src/npm-package-manifest-discovery.ts";
-import { recordNpmManifestDiscovery } from "../../src/npm-manifest-discovery-coordinator.ts";
+import { recordNpmManifestDiscovery, recordNpmManifestDiscoveries } from "../../src/npm-manifest-discovery-coordinator.ts";
 
 const port = Number(process.argv[2]), phase = process.argv[3] ?? "static";
-if (!Number.isInteger(port) || port < 1024 || port > 65535 || !["static", "bound"].includes(phase)) throw new Error("owned PostgreSQL port and exact manifest phase required");
+if (!Number.isInteger(port) || port < 1024 || port > 65535 || !["static", "bound", "batch"].includes(phase)) throw new Error("owned PostgreSQL port and exact manifest phase required");
 const pool = new Pool({ connectionString: `postgresql://postgres:acp_test_password@127.0.0.1:${port}/acp_test`, max: 4,
   connectionTimeoutMillis: 3000, statement_timeout: 5000, lock_timeout: 2000 });
 const legacy = (prefix: string) => `${prefix}_00000000-0000-4000-8000-000000000001`;
@@ -94,7 +94,7 @@ try {
     await assert.rejects(getProjectProfileProposal(pool, query(row)), /unavailable/u);
     assert.deepEqual(await writer.recordDiscovery({ ...row, observations: result.observations }), { proposal: saved.proposal, replayed: true });
   });
-  if (phase === "bound") {
+  if (phase === "bound" || phase === "batch") {
     await check("private coordinator binds supplied bytes to the current database hash and exact retained pin", async () => {
       const supplied = await evidence(bytes), row = identity(), before = await counts();
       const saved = await recordNpmManifestDiscovery(writer, { ...row, evidenceId: supplied.evidenceId, bytes });
@@ -180,5 +180,92 @@ try {
       assert.equal(retry.state, "recorded"); if (retry.state === "recorded") assert.equal(retry.replayed, true);
     });
   }
-  process.stdout.write(`Static manifest PostgreSQL integration passed: ${checks} checks.\n`);
+  if (phase === "batch") {
+    const suppliedSource = async (bytes: Uint8Array) => ({ evidenceId: (await evidence(bytes)).evidenceId, bytes });
+    await check("two equivalent manifests merge evidence into one draft and reorder to the same retained replay", async () => {
+      const sources = [await suppliedSource(bytes), await suppliedSource(bytes)], row = identity(), before = await counts();
+      const first = await recordNpmManifestDiscoveries(writer, { ...row, sources });
+      assert.equal(first.state, "recorded"); if (first.state !== "recorded") throw new Error("batch fixture");
+      assert.equal(first.proposal.fields["verification.tests"].status, "observed"); assert.equal(first.proposal.evidencePins.length, 2);
+      assert.deepEqual(await recordNpmManifestDiscoveries(writer, { ...row, sources: sources.slice().reverse() }), { ...first, replayed: true });
+      const after = await counts(); assert.equal(after.proposals, before.proposals + 1); assert.equal(after.pins, before.pins + 2);
+      for (const key of ["profiles", "grants", "runs", "effects", "missions"]) assert.equal(after[key], before[key]);
+    });
+    await check("different manifests retain conflicts and independent configured categories in a single proposal", async () => {
+      const sources = [await suppliedSource(Buffer.from('{"scripts":{"test":"one"}}')), await suppliedSource(Buffer.from('{"scripts":{"test":"two","lint":"lint"}}'))];
+      const result = await recordNpmManifestDiscoveries(writer, { ...identity(), sources });
+      assert.equal(result.state, "recorded"); if (result.state !== "recorded") throw new Error("batch fixture");
+      assert.equal(result.proposal.state, "conflicted"); assert.equal(result.proposal.fields["verification.tests"].status, "conflicted");
+      assert.equal(result.proposal.fields["verification.linting"].status, "observed"); assert.equal(result.proposal.fields["verification.builds"].status, "missing");
+    });
+    await check("one missing, restricted, wrong-project or hash-mismatched source prevents a partial draft", async () => {
+      const good = await suppliedSource(bytes), restricted = await suppliedSource(bytes), before = await counts();
+      await pool.query("UPDATE acp.evidence_records SET sensitivity='restricted' WHERE evidence_id=$1", [restricted.evidenceId]);
+      for (const bad of [{ evidenceId: createStableId("evidence"), bytes }, restricted]) {
+        await assert.rejects(recordNpmManifestDiscoveries(writer, { ...identity(), sources: [good, bad] }), /not confirmed/u);
+      }
+      await assert.rejects(writer.getCurrentDiscoveryEvidenceBatch({ projectId: createStableId("project"), evidenceIds: [good.evidenceId] }), /unavailable/u);
+      const mismatched = await suppliedSource(bytes);
+      assert.deepEqual(await recordNpmManifestDiscoveries(writer, { ...identity(), sources: [good, { ...mismatched, bytes: Buffer.from('{}') }] }), { state: "not_recorded", reason: "manifest_unconfirmed" });
+      assert.deepEqual(await counts(), before);
+    });
+    await check("empty contributors are not retained and adding another empty source can replay the same attributed history", async () => {
+      const nonempty = await suppliedSource(bytes), empty = await suppliedSource(Buffer.from('{}')), row = identity();
+      const first = await recordNpmManifestDiscoveries(writer, { ...row, sources: [empty, nonempty] });
+      assert.equal(first.state, "recorded"); if (first.state !== "recorded") throw new Error("batch fixture");
+      assert.deepEqual(first.proposal.evidencePins.map(pin => pin.evidenceId), [nonempty.evidenceId]);
+      const otherEmpty = await suppliedSource(Buffer.from('{"scripts":{"start":"ignored"}}'));
+      assert.deepEqual(await recordNpmManifestDiscoveries(writer, { ...row, sources: [otherEmpty, nonempty] }), { ...first, replayed: true });
+      const before = await counts();
+      assert.deepEqual(await recordNpmManifestDiscoveries(writer, { ...row, sources: [empty, otherEmpty] }), { state: "not_recorded", reason: "no_relevant_declarations" });
+      assert.deepEqual(await counts(), before);
+    });
+    await check("referenced-source drift after the batch snapshot rejects the whole new draft", async () => {
+      for (const change of ["content_hash='sha256:changed'", "freshness='stale'", "sensitivity='restricted'"]) {
+        const sources = [await suppliedSource(bytes), await suppliedSource(bytes)], before = await counts();
+        const intercepted = { async getCurrentDiscoveryEvidenceBatch(value: unknown) {
+          const descriptors = await writer.getCurrentDiscoveryEvidenceBatch(value);
+          await pool.query(`UPDATE acp.evidence_records SET ${change} WHERE evidence_id=$1`, [sources[1]!.evidenceId]); return descriptors;
+        }, recordPinnedDiscovery: writer.recordPinnedDiscovery.bind(writer) };
+        await assert.rejects(recordNpmManifestDiscoveries(intercepted, { ...identity(), sources }), /not confirmed/u);
+        assert.deepEqual(await counts(), before);
+      }
+    });
+    await check("empty-source changes are not commit-pinned or negative coverage and later declarations require new retained terms", async () => {
+      const nonempty = await suppliedSource(bytes), empty = await suppliedSource(Buffer.from('{}')), row = identity();
+      const changed = Buffer.from('{"scripts":{"test":"newly configured"}}');
+      const intercepted = { async getCurrentDiscoveryEvidenceBatch(value: unknown) {
+        const descriptors = await writer.getCurrentDiscoveryEvidenceBatch(value);
+        await pool.query("UPDATE acp.evidence_records SET content_hash=$2 WHERE evidence_id=$1", [empty.evidenceId, hash(changed)]); return descriptors;
+      }, recordPinnedDiscovery: writer.recordPinnedDiscovery.bind(writer) };
+      const first = await recordNpmManifestDiscoveries(intercepted, { ...row, sources: [empty, nonempty] });
+      assert.equal(first.state, "recorded"); if (first.state !== "recorded") throw new Error("batch fixture");
+      assert.deepEqual(first.proposal.evidencePins.map(pin => pin.evidenceId), [nonempty.evidenceId]);
+      await assert.rejects(recordNpmManifestDiscoveries(writer, { ...row, sources: [nonempty, { ...empty, bytes: changed }] }), /not confirmed/u);
+      assert.deepEqual(await getProjectProfileProposal(pool, query(row)), first.proposal);
+    });
+    await check("all descriptor rows share one MVCC snapshot across a concurrent metadata transaction", async () => {
+      const sources = [await suppliedSource(bytes), await suppliedSource(bytes)], selected = { projectId, evidenceIds: sources.map(item => item.evidenceId) };
+      const original = await writer.getCurrentDiscoveryEvidenceBatch(selected), gate = Math.floor(Math.random() * 1_000_000_000) + 1_000_000_000;
+      const holder = await pool.connect(); let pending: Promise<unknown> | undefined;
+      try {
+        await holder.query("BEGIN"); await holder.query("SELECT pg_advisory_xact_lock($1)", [gate]);
+        const intercepted = { options: pool.options, async query(sql: string, values?: unknown[]) {
+          return pool.query(`WITH waited AS MATERIALIZED (SELECT pg_advisory_xact_lock($3)) ${sql.replace("FROM acp.evidence_records e", "FROM acp.evidence_records e CROSS JOIN waited")}`, [...values!, gate]);
+        } } as unknown as Pool;
+        pending = new PostgresProfileProposalStore(intercepted, { component: "snapshot-fixture", version: "1", artifactDigest: canonicalJsonDigest({ snapshot: true }) }).getCurrentDiscoveryEvidenceBatch(selected);
+        pending.catch(() => undefined);
+        const until = Date.now() + 2000; let waiting = false;
+        while (Date.now() < until) {
+          waiting = (await pool.query("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE wait_event='advisory' AND query LIKE 'WITH waited AS MATERIALIZED%') AS waiting")).rows[0].waiting;
+          if (waiting) break; await new Promise(resolve => setTimeout(resolve, 10));
+        }
+        assert.equal(waiting, true);
+        await pool.query("UPDATE acp.evidence_records SET freshness='stale',source_version='changed together' WHERE evidence_id=ANY($1::text[])", [selected.evidenceIds]);
+        await holder.query("COMMIT"); assert.deepEqual(await pending, original);
+        await assert.rejects(writer.getCurrentDiscoveryEvidenceBatch(selected), /unavailable/u);
+      } finally { try { await holder.query("ROLLBACK"); } finally { holder.release(true); } await pending?.catch(() => undefined); }
+    });
+  }
+  process.stdout.write(`Manifest PostgreSQL integration (${phase}) passed: ${checks} checks.\n`);
 } finally { await pool.end(); }

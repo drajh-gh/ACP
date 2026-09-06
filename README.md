@@ -36,6 +36,9 @@ deployed autonomous service.
 - an optional private manifest coordinator that binds supplied bytes to a current
   database SHA-256 and locked evidence fingerprint before retaining a draft;
   no filesystem acquisition or durable standalone byte-proof is implied
+- bounded multi-source manifest composition with one descriptor snapshot and one
+  draft write, deterministic evidence merging and unresolved conflicts; empty
+  contributors are not retained negative scan evidence
 - deterministic effect-transition, approval-drift, cursor, and kill-switch
   guards
 - reversible PostgreSQL migrations, an up/down-checksum-aware runner, and stores for
@@ -261,7 +264,8 @@ using a disposable read-only database role, including whole-error disclosure and
 identity drift. No live probes, readiness MCP writer or execution authority
 is enabled. See [the readiness contract](docs/architecture/0019-recorded-capability-readiness.md).
 The standalone `ProfileProposals` phases (`core`, `races`, `references`, `snapshot`,
-`upgrade`, `regression`, `http`, `discovery`, `manifest`, `pinned`, `bound-manifest`) apply seeded PostgreSQL through 0018. Run one phase with
+`upgrade`, `regression`, `http`, `discovery`, `manifest`, `pinned`, `bound-manifest`,
+`batch-manifest`) apply seeded PostgreSQL through 0018. Run one phase with
 `pwsh -NoProfile -File scripts/check-postgres.ps1 -ProfileProposals core`. They check
 inert proposal history, exact retries, socket-loss recovery, evidence disclosure,
 MVCC consistency and history-preserving downgrade. The `http` phase exercises
@@ -277,6 +281,8 @@ admission, concurrent exclusion, rollback and uncertain-commit recovery without
 re-pinning historical retries.
 The `bound-manifest` phase adds supplied-byte/database-hash composition, intervening
 source drift, no-write outcomes and real lost-COMMIT recovery/uncertainty.
+The `batch-manifest` phase adds single-snapshot multi-source composition, canonical
+merge/conflict behavior, contributor drift and explicit empty-source limitations.
 No operator confirmation,
 publication or activation is enabled. See [the proposal ledger contract](docs/architecture/0021-retained-profile-proposals.md).
 The two `provisioner-observation` phases run sequentially in disposable native

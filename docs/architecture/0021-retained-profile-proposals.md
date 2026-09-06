@@ -65,6 +65,12 @@ descriptor, checks supplied bytes against its SHA-256, and uses this exact pin
 precondition. It neither changes the historical ledger nor establishes acquisition
 provenance. Its private descriptor read is not added to the public persistence or
 MCP interface.
+Its [multi-source variant](../../apps/worker/README.md#multi-source-manifest-composition)
+accepts at most five unique supplied manifests under a one-MiB aggregate bound,
+reads one exact descriptor snapshot, and reduces all reports before one write.
+Only nonempty contributor pins participate in admission and retained identity.
+Empty sources are not commit-pinned, persisted negative coverage or exact batch
+replay terms. The historical proposal remains attributed facts, not a scan receipt.
 
 ## Immutable chains and evidence
 

@@ -1,6 +1,7 @@
 import {
   buildProfileConfirmationRequest, canonicalJsonDigest, expectJsonValue, expectOnlyKeys, expectRecord,
-  parseCurrentProfileDiscoveryEvidence, parseProfileDiscoveryEvidenceQuery, parseProfileProposalIdentity, parseProfileProposalProducer, parseProjectProfileProposal, parseProjectProfileProposalQuery,
+  parseCurrentProfileDiscoveryEvidence, parseCurrentProfileDiscoveryEvidenceBatch, parseProfileDiscoveryEvidenceQuery, parseProfileDiscoveryEvidenceBatchQuery,
+  parseProfileProposalIdentity, parseProfileProposalProducer, parseProjectProfileProposal, parseProjectProfileProposalQuery,
   preparePinnedProfileDiscovery, prepareProfileProposalFields, profileProposalMaximumBytes, reduceProfileDiscoveryObservations,
   type ProfileEvidencePin, type ProfileProposalIdentity, type ProfileProposalProducer, type ProjectProfileProposal, type ProjectProfileProposalQuery, type ProfileConfirmationRequest,
 } from "@acp/domain";
@@ -20,6 +21,14 @@ export interface ProjectProfileProposalPersistence {
 const unavailable = "Profile proposal is unavailable; no partial snapshot returned.";
 const requestUnavailable = "Profile confirmation request is unavailable; no partial request returned.";
 const storageMaximumBytes = profileProposalMaximumBytes * 2;
+const currentDiscoverySourceSql = `CASE WHEN e.sensitivity IN ('public','project_confidential')
+  AND e.freshness='current' AND e.accessibility='available' AND e.content_hash ~ '^sha256:[0-9a-f]{64}$'
+  AND isfinite(e.observed_at) AND isfinite(e.retrieved_at)
+  AND e.observed_at >= timestamptz '0001-01-01 00:00:00+00' AND e.retrieved_at < timestamptz '10000-01-01 00:00:00+00'
+  AND e.observed_at <= e.retrieved_at AND e.retrieved_at <= clock_timestamp()
+  THEN jsonb_build_object('projectId',e.project_id,'evidenceId',e.evidence_id,'contentHash',e.content_hash,
+    'expectedPin',jsonb_build_object('projectId',e.project_id,'evidenceId',e.evidence_id,'identityDigest',acp.readiness_evidence_fingerprint(e)))
+  END`;
 
 /** Private, trusted discovery producer. This is not a public tool, human principal or publication grant. */
 export class PostgresProfileProposalStore {
@@ -46,16 +55,20 @@ export class PostgresProfileProposalStore {
   async getCurrentDiscoveryEvidence(value: unknown) {
     try {
       const query = parseProfileDiscoveryEvidenceQuery(value);
-      const result = await this.pool.query(`SELECT CASE WHEN e.sensitivity IN ('public','project_confidential')
-        AND e.freshness='current' AND e.accessibility='available' AND e.content_hash ~ '^sha256:[0-9a-f]{64}$'
-        AND isfinite(e.observed_at) AND isfinite(e.retrieved_at)
-        AND e.observed_at >= timestamptz '0001-01-01 00:00:00+00' AND e.retrieved_at < timestamptz '10000-01-01 00:00:00+00'
-        AND e.observed_at <= e.retrieved_at AND e.retrieved_at <= clock_timestamp()
-        THEN jsonb_build_object('projectId',e.project_id,'evidenceId',e.evidence_id,'contentHash',e.content_hash,
-          'expectedPin',jsonb_build_object('projectId',e.project_id,'evidenceId',e.evidence_id,'identityDigest',acp.readiness_evidence_fingerprint(e)))
-        END AS source FROM acp.evidence_records e WHERE e.project_id=$1 AND e.evidence_id=$2`, [query.projectId, query.evidenceId]);
+      const result = await this.pool.query(`SELECT ${currentDiscoverySourceSql} AS source FROM acp.evidence_records e
+        WHERE e.project_id=$1 AND e.evidence_id=$2`, [query.projectId, query.evidenceId]);
       if (result.rows.length !== 1) throw new Error("missing discovery evidence");
       return parseCurrentProfileDiscoveryEvidence(result.rows[0].source, query);
+    } catch { throw new Error("Current discovery evidence is unavailable."); }
+  }
+
+  /** One bounded MVCC descriptor set, not independent per-source reads or retained negative coverage. */
+  async getCurrentDiscoveryEvidenceBatch(value: unknown) {
+    try {
+      const query = parseProfileDiscoveryEvidenceBatchQuery(value);
+      const result = await this.pool.query(`SELECT ${currentDiscoverySourceSql} AS source FROM acp.evidence_records e
+        WHERE e.project_id=$1 AND e.evidence_id=ANY($2::text[]) ORDER BY e.evidence_id`, [query.projectId, query.evidenceIds]);
+      return parseCurrentProfileDiscoveryEvidenceBatch(result.rows.map(row => row.source), query);
     } catch { throw new Error("Current discovery evidence is unavailable."); }
   }
 

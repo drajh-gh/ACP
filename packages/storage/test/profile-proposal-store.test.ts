@@ -66,6 +66,30 @@ it("current discovery evidence denies invalid queries before I/O and missing or 
     rows = bad; await assert.rejects(store.getCurrentDiscoveryEvidence({ projectId: identity.projectId, evidenceId }), { message: "Current discovery evidence is unavailable." });
   }
 });
+it("current discovery evidence batch uses one query and canonical exact-set association", async () => {
+  const evidenceIds = [createStableId("evidence"), createStableId("evidence")].sort();
+  const sources = evidenceIds.map(evidenceId => ({ evidenceId, projectId: identity.projectId, contentHash: canonicalJsonDigest({ bytes: evidenceId }),
+    expectedPin: { evidenceId, projectId: identity.projectId, identityDigest: canonicalJsonDigest({ source: evidenceId }) } }));
+  let calls = 0;
+  const pool = { options, async query(sql: string, values: unknown[]) { calls++; assert.deepEqual(values, [identity.projectId, evidenceIds]); assert.match(sql, /ANY\(\$2::text\[\]\)/u);
+    return { rows: sources.slice().reverse().map(source => ({ source })) };
+  } } as unknown as Pool;
+  assert.deepEqual(await new PostgresProfileProposalStore(pool, producer).getCurrentDiscoveryEvidenceBatch({ projectId: identity.projectId, evidenceIds: evidenceIds.slice().reverse() }), sources);
+  assert.equal(calls, 1);
+});
+it("current evidence batch rejects bad selectors before I/O and missing, duplicate or undisclosable rows as a whole", async () => {
+  const evidenceId = createStableId("evidence"), source = { evidenceId, projectId: identity.projectId, contentHash: canonicalJsonDigest({ bytes: true }),
+    expectedPin: { evidenceId, projectId: identity.projectId, identityDigest: canonicalJsonDigest({ source: true }) } };
+  let rows: unknown[] = [], calls = 0;
+  const pool = { options, async query() { calls++; return { rows }; } } as unknown as Pool, store = new PostgresProfileProposalStore(pool, producer);
+  for (const evidenceIds of [[], [evidenceId, evidenceId], new Array(1), Array.from({ length: 6 }, () => createStableId("evidence"))]) {
+    await assert.rejects(store.getCurrentDiscoveryEvidenceBatch({ projectId: identity.projectId, evidenceIds }));
+  }
+  assert.equal(calls, 0);
+  for (const bad of [[], [{ source: null }], [{ source }, { source }], [{ source: { ...source, projectId: createStableId("project") } }]]) {
+    rows = bad; await assert.rejects(store.getCurrentDiscoveryEvidenceBatch({ projectId: identity.projectId, evidenceIds: [evidenceId] }), { message: "Current discovery evidence is unavailable." });
+  }
+});
 it("pinned discovery checks retained pins before historical COMMIT and does not rerun live admission", async () => {
   const evidenceId = createStableId("evidence"), pin = { evidenceId, projectId: identity.projectId, identityDigest: canonicalJsonDigest({ source: "original" }) };
   const observations = [{ fieldId: "context.product", value: "Synthetic", evidenceIds: [evidenceId] }];
