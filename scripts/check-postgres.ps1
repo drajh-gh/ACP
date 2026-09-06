@@ -15,7 +15,7 @@ param(
   [string]$WorktreeReservations,
   [ValidateSet('core', 'limits', 'snapshot')]
   [string]$CounterpartStatus,
-  [ValidateSet('core', 'races')]
+  [ValidateSet('core', 'races', 'http')]
   [string]$CounterpartSessions,
   [ValidateSet('core', 'races', 'expiry', 'upgrade', 'regression')]
   [string]$ProvisionerPlans,
@@ -380,7 +380,11 @@ try {
     finally { $checkProcess.Dispose() }
   }
   if ($CounterpartSessions) {
-    Invoke-AcpNodeCheck 'packages/storage/test/integration/counterpart-sessions.ts' 'Counterpart mission session integration' $CounterpartSessions -TimeoutSeconds 30
+    if ($CounterpartSessions -eq 'http') {
+      Invoke-AcpNodeCheck 'apps/control-api/test/integration/counterpart-create.ts' 'Counterpart mission PostgreSQL and HTTP integration' -TimeoutSeconds 30
+    } else {
+      Invoke-AcpNodeCheck 'packages/storage/test/integration/counterpart-sessions.ts' 'Counterpart mission session integration' $CounterpartSessions -TimeoutSeconds 30
+    }
     Write-Host 'Focused counterpart mission session phase passed; no workflow or external effect was executed.'
     return
   }

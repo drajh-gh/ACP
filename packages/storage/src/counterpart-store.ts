@@ -17,6 +17,8 @@ import { getProjectProfileProposal as readProjectProfileProposal, getProfileConf
   type ProjectProfileProposalPersistence } from "./profile-proposal-store.ts";
 import { counterpartStatusCollectionLimit,counterpartStatusEnvironmentLimit,counterpartStatusMaximumBytes,
   parseCounterpartMissionStatus,type CounterpartMissionStatus } from "./counterpart-status.ts";
+import type { CounterpartMissionCreation, CounterpartMissionProjection, CounterpartMissionSummary } from "./counterpart-mission-projection.ts";
+export type { CounterpartMissionCreation, CounterpartMissionNodeProjection, CounterpartMissionProjection, CounterpartMissionSummary } from "./counterpart-mission-projection.ts";
 
 export interface CounterpartMissionCreate {
   readonly clientRequestId: string;
@@ -26,36 +28,6 @@ export interface CounterpartMissionCreate {
   /** Legacy wire name for an exact canonical workflow ID, never a name alias. */
   readonly workflowKey?: string;
 }
-
-export interface CounterpartMissionNodeProjection {
-  readonly nodeId: StableId<"node">;
-  readonly nodeType: string;
-  readonly workerRole: string;
-  readonly state: string;
-  readonly graphRevision: string;
-}
-
-export interface CounterpartMissionProjection {
-  readonly missionId: StableId<"mission">;
-  readonly projectId: StableId<"project">;
-  readonly state: MissionState;
-  readonly requestedScope: string;
-  readonly workflowId: StableId<"workflow">;
-  readonly workflowVersion: string;
-  readonly completionContractId: StableId<"completionContract">;
-  readonly completionContractVersion: string;
-  readonly createdAt: string;
-  readonly updatedAt: string;
-  readonly nodes: readonly CounterpartMissionNodeProjection[];
-}
-
-export interface CounterpartMissionCreation {
-  readonly mission: CounterpartMissionProjection;
-  readonly replayed: boolean;
-}
-
-export interface CounterpartMissionSummary
-  extends Omit<CounterpartMissionProjection, "nodes"> {}
 
 export interface CounterpartMissionPersistence extends ProjectReadinessPersistence, ProjectProfileProposalPersistence {
   createMission(input: CounterpartMissionCreate): Promise<CounterpartMissionCreation>;

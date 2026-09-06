@@ -45,7 +45,7 @@ class MemoryCounterpartService implements CounterpartMissionPersistence {
     input: CounterpartMissionCreate,
   ): Promise<CounterpartMissionCreation> {
     this.creations.push(input);
-    return { mission: this.mission, replayed: false };
+    return { mission: { ...this.mission, requestedScope: input.requestedScope }, replayed: false };
   }
 
   async getMission(
@@ -228,6 +228,9 @@ describe("authenticated counterpart MCP", () => {
         { ...persistence.status,lifecycle:{ ...persistence.status.lifecycle,candidate:{ ...persistence.status.lifecycle.candidate,rawContent:sentinel } } },
         { ...persistence.status,missionId:createStableId("mission") },
         { ...persistence.status,requestedScope:"ž".repeat(40000) },
+        { ...persistence.status,lifecycle:{ ...persistence.status.lifecycle,deployments:[{
+          ...persistence.status.lifecycle.deployments[0],artifactVersion:{ status:"unknown",privateMetadata:sentinel },
+        }] } },
       ]) {
         persistence.getMissionStatus=async()=>invalid as CounterpartMissionStatus;
         const result=await client.callTool({ name:"get_mission_status",arguments:{ missionId:persistence.mission.missionId } });
@@ -237,6 +240,100 @@ describe("authenticated counterpart MCP", () => {
     } finally { await client.close(); await close(server); }
   });
 });
+
+for (const tool of ["create_mission", "get_mission_status", "list_active_missions"] as const) {
+  it(`${tool} contains private persistence exceptions in a fixed whole-response error`, async () => {
+    const persistence = new MemoryCounterpartService();
+    const sentinel = "private-schema.restricted_table / local-credential-path synthetic-only";
+    const fail = async (): Promise<never> => { throw new Error(sentinel); };
+    persistence.createMission = fail;
+    persistence.getMissionStatus = fail;
+    persistence.listActiveMissions = fail;
+    await withMissionClient(persistence, async (client) => {
+      const result = await client.callTool({ name: tool, arguments: argumentsFor(tool, persistence) });
+      assert.equal(result.isError, true);
+      assert.equal(result.structuredContent, undefined);
+      assert.equal(JSON.stringify(result).includes(sentinel), false);
+      assert.deepEqual(result.content, [{ type: "text", text: missionErrors[tool] }]);
+    });
+  });
+}
+
+const missionErrors = {
+  create_mission: "ACP mission creation could not be confirmed. Reuse the same request ID only with unchanged terms.",
+  get_mission_status: "ACP mission status is unavailable; no partial snapshot returned.",
+  list_active_missions: "ACP active missions are unavailable; no partial list returned.",
+};
+
+it("mission creation rejects unexpected fields, substitutions and invalid projections as a whole", async () => {
+  const persistence = new MemoryCounterpartService(), base = { mission: persistence.mission, replayed: false };
+  const sentinel = "synthetic-private-metadata-must-not-escape";
+  const node = persistence.mission.nodes[0]!;
+  const variants: unknown[] = [
+    { ...base, privateMetadata: sentinel },
+    { ...base, mission: { ...base.mission, privateMetadata: sentinel } },
+    { ...base, mission: { ...base.mission, nodes: [{ ...node, privateMetadata: sentinel }] } },
+    { ...base, mission: { ...base.mission, projectId: createStableId("project") } },
+    { ...base, mission: { ...base.mission, requestedScope: "Different requested scope." } },
+    { ...base, mission: { ...base.mission, workflowId: createStableId("workflow") } },
+    { ...base, mission: { ...base.mission, missionId: "mis_123" } },
+    { ...base, mission: { ...base.mission, state: "made_up" } },
+    { ...base, mission: { ...base.mission, createdAt: "2026-02-30T00:00:00Z" } },
+    { ...base, mission: { ...base.mission, workflowVersion: "latest" } },
+    { ...base, mission: { ...base.mission, nodes: [node, node] } },
+    { ...base, mission: { ...base.mission, nodes: Array.from({ length: 201 }, () => ({ ...node, nodeId: createStableId("node") })) } },
+    { ...base, mission: { ...base.mission, nodes: Array.from({ length: 20 }, () => ({ ...node, nodeId: createStableId("node"), nodeType: "😀".repeat(2000) })) } },
+  ];
+  await withMissionClient(persistence, async (client) => {
+    for (const [index, value] of variants.entries()) {
+      persistence.createMission = async () => value as CounterpartMissionCreation;
+      const result = await client.callTool({ name: "create_mission", arguments: {
+        ...argumentsFor("create_mission", persistence), workflowKey: base.mission.workflowId,
+      } });
+      assert.equal(result.isError, true, `variant ${index}`);
+      assert.equal(result.structuredContent, undefined, `variant ${index}`);
+      assert.deepEqual(result.content, [{ type: "text", text: missionErrors.create_mission }], `variant ${index}`);
+    }
+  });
+});
+
+it("active mission lists reject extra fields, wrong projects, duplicates, terminal states and query overruns", async () => {
+  const persistence = new MemoryCounterpartService();
+  const { nodes: _nodes, ...summary } = persistence.mission;
+  const variants: unknown[] = [
+    [{ ...summary, privateMetadata: "synthetic-private-list-content" }],
+    [{ ...summary, projectId: createStableId("project") }],
+    [summary, summary],
+    [{ ...summary, state: "cancelled" }],
+    [summary, { ...summary, missionId: createStableId("mission") }],
+  ];
+  await withMissionClient(persistence, async (client) => {
+    for (const [index, value] of variants.entries()) {
+      persistence.listActiveMissions = async () => value as CounterpartMissionSummary[];
+      const result = await client.callTool({ name: "list_active_missions", arguments: { projectId: summary.projectId, limit: index === 2 ? 2 : 1 } });
+      assert.equal(result.isError, true, `variant ${index}`);
+      assert.equal(result.structuredContent, undefined);
+      assert.deepEqual(result.content, [{ type: "text", text: missionErrors.list_active_missions }]);
+    }
+  });
+});
+
+function argumentsFor(tool: keyof typeof missionErrors, persistence: MemoryCounterpartService) {
+  if (tool === "create_mission") return { clientRequestId: "bounded-result-test", projectId: persistence.mission.projectId,
+    objective: "Synthetic mission.", requestedScope: persistence.mission.requestedScope };
+  if (tool === "get_mission_status") return { missionId: persistence.mission.missionId };
+  return { projectId: persistence.mission.projectId };
+}
+
+async function withMissionClient(persistence: MemoryCounterpartService, action: (client: Client) => Promise<void>) {
+  const server = createControlApiServer({ persistence, bearerToken }), baseUrl = await listen(server);
+  const client = new Client({ name: "acp-mission-boundary-test", version: "1.0.0" });
+  const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`), { requestInit: { headers: {
+    Authorization: `Bearer ${bearerToken}`, "X-ACP-Plugin-Version": pluginVersion,
+  } } });
+  try { await client.connect(transport as unknown as Transport); await action(client); }
+  finally { try { await client.close(); } finally { await close(server); } }
+}
 
 function missionFor(): CounterpartMissionProjection {
   return {

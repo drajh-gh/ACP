@@ -1,13 +1,14 @@
 import {
   assertLifecyclePacketVersion,expectArray,expectBoolean,expectEnum,expectIsoTimestamp,expectOnlyKeys,expectRecord,expectString,
-  missionStates,parseLifecycleVector,parseStableId,
+  parseLifecycleVector,parseStableId,
   type AcceptanceLifecycle,type BusinessCompletionLifecycle,type CandidateLifecycle,type CompletionEvaluation,
   type DeploymentLifecycle,type EffectLifecycle,type StableId,type TrackerLifecycle,
 } from "@acp/domain";
-import type { CounterpartMissionProjection } from "./counterpart-store.ts";
+import { counterpartMissionMaximumBytes, counterpartMissionCollectionLimit, parseCounterpartMissionSummaryFields,
+  parseCounterpartMissionNodes, snapshotCounterpartMissionData, type CounterpartMissionProjection } from "./counterpart-mission-projection.ts";
 
-export const counterpartStatusMaximumBytes=65_536;
-export const counterpartStatusCollectionLimit=200;
+export const counterpartStatusMaximumBytes=counterpartMissionMaximumBytes;
+export const counterpartStatusCollectionLimit=counterpartMissionCollectionLimit;
 export const counterpartStatusEnvironmentLimit=50;
 
 export interface CounterpartStatusEvidence {
@@ -40,12 +41,10 @@ export interface CounterpartMissionStatus extends CounterpartMissionProjection {
 /** Recorded, bounded and normalized metadata. No live completion evaluation,
  * mutation, authority renewal, inferred freshness or invented absent state. */
 export function parseCounterpartMissionStatus(value:unknown):CounterpartMissionStatus {
-  const encoded=JSON.stringify(value);
-  if(encoded===undefined || Buffer.byteLength(encoded,"utf8")>counterpartStatusMaximumBytes) throw new TypeError("mission status exceeds bounded snapshot");
-  const input=exact(value,["missionId","projectId","state","requestedScope","workflowId","workflowVersion","completionContractId",
+  const input=exact(snapshotCounterpartMissionData(value),["missionId","projectId","state","requestedScope","workflowId","workflowVersion","completionContractId",
     "completionContractVersion","createdAt","updatedAt","nodes","statusSchemaVersion","asOf","lifecycle","completion","assessment","evidence"],"status");
-  const missionId=parseStableId(input.missionId,"mission"),state=expectEnum(input.state,missionStates,"status.state");
-  const completionContractId=parseStableId(input.completionContractId,"completionContract"),completionContractVersion=text(input.completionContractVersion);
+  const summary=parseCounterpartMissionSummaryFields(input),nodes=parseCounterpartMissionNodes(input.nodes);
+  const { missionId,state,completionContractId,completionContractVersion }=summary;
   const completion=exact(input.completion,["appliedEvaluationId","appliedEvaluation","latestEvaluation"],"status.completion");
   const appliedEvaluationId=completion.appliedEvaluationId===null ? null : parseStableId(completion.appliedEvaluationId,"completionEvaluation");
   const appliedEvaluation=evaluation(completion.appliedEvaluation),latestEvaluation=evaluation(completion.latestEvaluation);
@@ -112,17 +111,11 @@ export function parseCounterpartMissionStatus(value:unknown):CounterpartMissionS
   if(evidenceSet.size!==evidence.length || evidenceSet.size!==selectedIds.size || [...selectedIds].some((id)=>!evidenceSet.has(id))) {
     throw new TypeError("status requires exactly its selected evidence metadata");
   }
-  const nodes=array(input.nodes).map((value)=>{
-    const n=exact(value,["nodeId","nodeType","workerRole","state","graphRevision"],"status.node");
-    return { nodeId:parseStableId(n.nodeId,"node"),nodeType:text(n.nodeType),workerRole:text(n.workerRole),state:text(n.state),graphRevision:text(n.graphRevision) };
-  });
-  if(new Set(nodes.map((n)=>n.nodeId)).size!==nodes.length || new Set(parsed.effects.map((e)=>e.effectId)).size!==parsed.effects.length) {
+  if(new Set(parsed.effects.map((e)=>e.effectId)).size!==parsed.effects.length) {
     throw new TypeError("status collections require unique identities");
   }
   const assessment=exact(input.assessment,["kind","freshness","conflicts"],"status.assessment");
-  return { missionId,projectId:parseStableId(input.projectId,"project"),state,requestedScope:text(input.requestedScope),
-    workflowId:parseStableId(input.workflowId,"workflow"),workflowVersion:text(input.workflowVersion),completionContractId,completionContractVersion,
-    createdAt:expectIsoTimestamp(input.createdAt,"status.createdAt"),updatedAt:expectIsoTimestamp(input.updatedAt,"status.updatedAt"),nodes,
+  return { ...summary,nodes,
     statusSchemaVersion:expectEnum(input.statusSchemaVersion,["1.0.0"],"status.schemaVersion"),asOf:expectIsoTimestamp(input.asOf,"status.asOf"),
     lifecycle:{ candidate:parsed.candidate??null,deployments,acceptance:lifecycle.acceptance===null ? null : parsed.acceptance,
       tracker:parsed.tracker??null,effects:parsed.effects,businessCompletion:lifecycle.businessCompletion===null ? null : parsed.businessCompletion },
@@ -135,7 +128,7 @@ function exact(value:unknown,keys:readonly string[],path:string):Record<string,u
 }
 function shape(value:unknown,keys:readonly string[],optional:readonly string[],path:string):Record<string,unknown> {
   const row=expectRecord(value,path); expectOnlyKeys(row,[...keys,...optional],path);
-  if(keys.some((key)=>!(key in row))) throw new TypeError(`${path} requires every declared field`);
+  if(keys.some((key)=>!Object.hasOwn(row,key))) throw new TypeError(`${path} requires every declared field`);
   return row;
 }
 function microseconds(value:string):bigint {

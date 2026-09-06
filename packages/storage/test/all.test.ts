@@ -5,6 +5,7 @@ import "./worker-runtime-store.test.ts";
 import "./counterpart-store.test.ts";
 import "./counterpart-session.test.ts";
 import "./counterpart-status.test.ts";
+import "./counterpart-mission-projection.test.ts";
 import "./worker-launch-store.test.ts";
 import "./repository-binding.test.ts";
 import "./repository-binding-session.test.ts";

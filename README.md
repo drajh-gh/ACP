@@ -150,6 +150,7 @@ pwsh -NoProfile -File scripts/check-postgres.ps1 -CounterpartStatus limits
 pwsh -NoProfile -File scripts/check-postgres.ps1 -CounterpartStatus snapshot
 pwsh -NoProfile -File scripts/check-postgres.ps1 -CounterpartSessions core
 pwsh -NoProfile -File scripts/check-postgres.ps1 -CounterpartSessions races
+pwsh -NoProfile -File scripts/check-postgres.ps1 -CounterpartSessions http
 pwsh -NoProfile -File scripts/check-postgres.ps1 -ProvisionerPlans core
 pwsh -NoProfile -File scripts/check-postgres.ps1 -ProvisionerPlans races
 pwsh -NoProfile -File scripts/check-postgres.ps1 -ProvisionerPlans expiry
@@ -271,6 +272,13 @@ a workflow or external effect. The optional MCP `workflowKey` is a legacy name
 for an exact canonical `wfl_…` workflow ID, not a friendly-name alias; the existing
 authoritative binding still pins its version. See
 [the mission creation session contract](docs/architecture/0034-counterpart-mission-creation-sessions.md).
+The `http` phase composes the real PostgreSQL store with loopback authenticated
+MCP: malformed requests cause no SQL, creation/replay retain one history, and a
+lost actual COMMIT reply stays unconfirmed until an explicit unchanged retry.
+Mission tools now reject invalid whole responses, enforce exact query identity
+and bounded JSON data, and return fixed private-error messages. Creation errors
+do not imply rollback or absence. See
+[the mission response boundary](docs/architecture/0035-counterpart-mission-response-boundary.md).
 The standalone `ProvisionerPlans` phases apply seeded PostgreSQL through 0016
 and test inert immutable attempt plans, expiry/race denial, history-preserving
 downgrade and predecessor target holds. Directory identities and paths are

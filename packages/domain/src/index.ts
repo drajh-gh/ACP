@@ -3,6 +3,7 @@ export * from "./compatibility.ts";
 export * from "./effects.ts";
 export * from "./ids.ts";
 export * from "./intake.ts";
+export * from "./json-snapshot.ts";
 export * from "./lifecycle.ts";
 export * from "./node-context.ts";
 export * from "./profile-proposal.ts";

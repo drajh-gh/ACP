@@ -3,6 +3,9 @@ export * from "./context-store.ts";
 export * from "./dispatch-store.ts";
 export * from "./control-store.ts";
 export * from "./counterpart-store.ts";
+export { counterpartMissionCollectionLimit, counterpartMissionMaximumBytes, counterpartMissionNodeStates,
+  parseCounterpartMissionCreation, parseCounterpartMissionProjection, parseCounterpartActiveMissions,
+  snapshotCounterpartMissionData } from "./counterpart-mission-projection.ts";
 export * from "./counterpart-status.ts";
 export * from "./effect-store.ts";
 export * from "./lease-store.ts";

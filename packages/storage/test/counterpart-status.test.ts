@@ -9,6 +9,34 @@ it("mission status preserves microsecond timestamps and unobserved dimensions wi
   assert.notEqual(parseCounterpartMissionStatus(input),input);
 });
 
+it("status rejects accessors and serialization hooks without invoking them", () => {
+  let invoked = 0;
+  const accessor = Object.defineProperty(statusFixture(), "requestedScope", { enumerable: true, get() { invoked++; return "private"; } });
+  const hook = Object.assign(statusFixture(), { toJSON() { invoked++; return statusFixture(); } });
+  for (const value of [accessor, hook]) assert.throws(() => parseCounterpartMissionStatus(value));
+  assert.equal(invoked, 0);
+});
+
+it("status rejects non-JSON object and array shapes before inspecting metadata", () => {
+  const sparse = new Array(2), custom = Object.assign([], { privateField: "synthetic" });
+  const symbol = Object.assign(statusFixture(), { [Symbol("private")]: "synthetic" });
+  const hidden = Object.defineProperty(statusFixture(), "privateField", { value: "synthetic" });
+  const cyclic: Record<string, unknown> = { ...statusFixture() }; cyclic.self = cyclic;
+  for (const value of [symbol, hidden, cyclic, { ...statusFixture(), nodes: sparse }, { ...statusFixture(), nodes: custom }]) {
+    assert.throws(() => parseCounterpartMissionStatus(value));
+  }
+});
+
+it("status rejects invalid persisted mission vocabulary, version and timestamp spellings", () => {
+  const base = statusFixture(), node = { nodeId: createStableId("node"), nodeType: "delivery", workerRole: "delivery", state: "pending", graphRevision: "1" };
+  for (const changed of [
+    { workflowVersion: "latest" }, { completionContractVersion: "1" },
+    { createdAt: "2026-02-30T00:00:00Z" }, { updatedAt: "2026-09-06T00:00:00.1234567Z" },
+    { nodes: [{ ...node, workerRole: "admin" }] }, { nodes: [{ ...node, state: "blocked" }] },
+    { nodes: [node, node] },
+  ]) assert.throws(() => parseCounterpartMissionStatus({ ...base, ...changed }));
+});
+
 const observation=()=>({ recordId:createStableId("event"),observedAt:"2026-09-06T00:00:30.123456+00:00" });
 function observedFixture() {
   const base=statusFixture(),evidenceId=createStableId("evidence");
