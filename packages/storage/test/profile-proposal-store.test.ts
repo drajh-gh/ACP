@@ -37,6 +37,30 @@ it("private discovery delegates normalized history to the same exact replay and 
   assert.ok(!seen.some(sql => /INSERT|UPDATE|DELETE/u.test(sql))); assert.deepEqual(releases, [true, true]);
 });
 
+it("pinned discovery rejects invalid expectations before opening a database session", async () => {
+  let calls = 0;
+  const pool = { options, async connect() { calls++; throw new Error("unexpected pinned discovery I/O"); } } as unknown as Pool;
+  const store = new PostgresProfileProposalStore(pool, producer);
+  await assert.rejects(store.recordPinnedDiscovery({ ...identity, observations: [], expectedEvidencePins: [{ evidenceId: createStableId("evidence"), projectId: identity.projectId, identityDigest: canonicalJsonDigest({ synthetic: true }) }] }));
+  await assert.rejects(store.recordPinnedDiscovery({ ...identity, observations: [], expectedEvidencePins: [], authority: "injected" } as never));
+  assert.equal(calls, 0);
+});
+it("pinned discovery checks retained pins before historical COMMIT and does not rerun live admission", async () => {
+  const evidenceId = createStableId("evidence"), pin = { evidenceId, projectId: identity.projectId, identityDigest: canonicalJsonDigest({ source: "original" }) };
+  const observations = [{ fieldId: "context.product", value: "Synthetic", evidenceIds: [evidenceId] }];
+  const saved = buildProjectProfileProposal({ ...identity, producer, proposedAt: proposal.proposedAt }, reduceProfileDiscoveryObservations(observations), [pin]);
+  const seen: string[] = [], releases: unknown[] = [];
+  const pool = { options, async connect() { return { async query(sql: string) {
+    seen.push(sql); if (sql.startsWith("SELECT CASE")) return { rows: [{ body: bodyOf(saved) }] };
+    assert.ok(sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK"); return { rows: [] };
+  }, release(discard: unknown) { releases.push(discard); } }; } } as unknown as Pool;
+  const store = new PostgresProfileProposalStore(pool, producer);
+  assert.deepEqual(await store.recordPinnedDiscovery({ ...identity, observations, expectedEvidencePins: [pin] }), { proposal: saved, replayed: true });
+  seen.length = 0;
+  await assert.rejects(store.recordPinnedDiscovery({ ...identity, observations, expectedEvidencePins: [{ ...pin, identityDigest: canonicalJsonDigest({ source: "changed" }) }] }), /expected evidence/u);
+  assert.equal(seen.includes("COMMIT"), false); assert.equal(seen.at(-1), "ROLLBACK"); assert.deepEqual(releases, [true, true]);
+});
+
 it("profile writer observes checked-out socket errors and removes the listener only after discard", async () => {
   for (const phase of ["BEGIN", "COMMIT"]) {
     const client = new EventEmitter(), seen: string[] = [];

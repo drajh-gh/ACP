@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { it } from "node:test";
 import { canonicalJsonDigest } from "../src/effects.ts";
 import { createStableId } from "../src/ids.ts";
-import { buildProjectProfileProposal, profileFieldIds, reduceProfileDiscoveryObservations } from "../src/profile-proposal.ts";
+import { buildProjectProfileProposal, preparePinnedProfileDiscovery, profileFieldIds, reduceProfileDiscoveryObservations } from "../src/profile-proposal.ts";
 import { expectJsonValue } from "../src/validation.ts";
 
 const evidence = Array.from({ length: 22 }, () => createStableId("evidence"));
@@ -78,4 +78,19 @@ it("discovery uses the same credential catalog and exact tracker mapping boundar
   assert.throws(() => reduceProfileDiscoveryObservations([{ ...catalog, value: [] }, identity]));
   assert.throws(() => reduceProfileDiscoveryObservations([observation([{ ...mapping, semanticCategory: "universally_done" }], undefined, "tracker.semanticMappings")]));
   assert.throws(() => reduceProfileDiscoveryObservations([observation([{ token: "synthetic-secret" }], undefined, "credentials.references")]));
+});
+
+it("pinned discovery requires exactly the complete evidence union and canonicalizes expected pins", () => {
+  const observations = [observation("same", evidence.slice(0, 2))], expected = pins(evidence.slice(0, 2));
+  const prepared = preparePinnedProfileDiscovery(metadata.projectId, observations, expected.slice().reverse());
+  assert.deepEqual(prepared.fields, reduceProfileDiscoveryObservations(observations));
+  assert.deepEqual(prepared.expectedEvidencePins, expected.sort((a, b) => a.evidenceId < b.evidenceId ? -1 : 1));
+  assert.deepEqual(preparePinnedProfileDiscovery(metadata.projectId, [], []).expectedEvidencePins, []);
+});
+it("pinned discovery rejects malformed, missing, extra, duplicate and wrong-project expectations", () => {
+  const observations = [observation("synthetic")], expected = pins(evidence.slice(0, 1));
+  for (const invalid of [[], [...expected, ...expected], pins(evidence.slice(0, 2)),
+    [{ ...expected[0], projectId: createStableId("project") }], [{ ...expected[0], evidenceId: createStableId("mission") }],
+    [{ ...expected[0], identityDigest: "sha256:invented" }], [{ ...expected[0], contentHash: digest("not part of a pin") }],
+    [{ ...expected[0], authority: "approved" }], new Array(1)]) assert.throws(() => preparePinnedProfileDiscovery(metadata.projectId, observations, invalid));
 });

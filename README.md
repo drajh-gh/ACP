@@ -27,6 +27,9 @@ deployed autonomous service.
   retains conflicting alternatives and fills unanswered fields without guessing;
   its private producer entrypoint reuses the immutable proposal ledger, not a
   public discovery/writer tool or automatic provider scan
+- an optional private discovery writer that compares exact evidence fingerprints
+  and current usability under database locks; retries retain original pins without
+  renewing evidence or proving source-byte provenance
 - a static digest-checked npm manifest adapter that discovers configured
   test/lint/build script names and command fingerprints without executing commands
   or claiming filesystem identity, current evidence binding, readiness or authority
@@ -255,7 +258,7 @@ using a disposable read-only database role, including whole-error disclosure and
 identity drift. No live probes, readiness MCP writer or execution authority
 is enabled. See [the readiness contract](docs/architecture/0019-recorded-capability-readiness.md).
 The standalone `ProfileProposals` phases (`core`, `races`, `references`, `snapshot`,
-`upgrade`, `regression`, `http`, `discovery`, `manifest`) apply seeded PostgreSQL through 0018. Run one phase with
+`upgrade`, `regression`, `http`, `discovery`, `manifest`, `pinned`) apply seeded PostgreSQL through 0018. Run one phase with
 `pwsh -NoProfile -File scripts/check-postgres.ps1 -ProfileProposals core`. They check
 inert proposal history, exact retries, socket-loss recovery, evidence disclosure,
 MVCC consistency and history-preserving downgrade. The `http` phase exercises
@@ -266,6 +269,9 @@ reduction, immutable normalized retries, corrections and evidence disclosure
 through the private producer. The `manifest` phase composes supplied package-JSON
 bytes, synthetic evidence, static extraction and that private producer, without
 running discovered commands or establishing a production acquisition path.
+The `pinned` phase checks exact fingerprint preconditions, current usable-evidence
+admission, concurrent exclusion, rollback and uncertain-commit recovery without
+re-pinning historical retries.
 No operator confirmation,
 publication or activation is enabled. See [the proposal ledger contract](docs/architecture/0021-retained-profile-proposals.md).
 The two `provisioner-observation` phases run sequentially in disposable native

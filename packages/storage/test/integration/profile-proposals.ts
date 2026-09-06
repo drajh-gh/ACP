@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { Pool, type QueryResult, type QueryResultRow } from "pg";
 import { buildProjectProfileProposal, canonicalJsonDigest, createStableId, prepareProfileProposalFields, profileFieldIds, type StableId } from "@acp/domain";
-import { getProjectProfileProposal, getProfileConfirmationRequest, PostgresProfileProposalStore, type ProfileProposalWrite } from "../../src/profile-proposal-store.ts";
+import { getProjectProfileProposal, getProfileConfirmationRequest, PostgresProfileProposalStore, type ProfileProposalWrite, type PinnedProfileDiscoveryWrite } from "../../src/profile-proposal-store.ts";
 import { projectProfileProposalSql } from "../../src/profile-proposal-query.ts";
 
 const port = Number(process.argv[2]), phase = process.argv[3];
-if (!Number.isInteger(port) || port < 1024 || port > 65535 || !["core", "races", "references", "snapshot", "upgrade", "discovery"].includes(phase ?? "")) throw new Error("owned database port and exact profile proposal phase required");
+if (!Number.isInteger(port) || port < 1024 || port > 65535 || !["core", "races", "references", "snapshot", "upgrade", "discovery", "pinned"].includes(phase ?? "")) throw new Error("owned database port and exact profile proposal phase required");
 const pool = new Pool({ connectionString: `postgresql://postgres:acp_test_password@127.0.0.1:${port}/acp_test`, max: 4,
   connectionTimeoutMillis: 3000, statement_timeout: 5000, lock_timeout: 3000, application_name: "acp-profile-proposal-fixture" });
 const legacy = (prefix: string) => `${prefix}_00000000-0000-4000-8000-000000000001`;
@@ -62,6 +62,129 @@ async function migration(direction: "up" | "down") {
 }
 
 try {
+  if (phase === "pinned") {
+    async function pins(ids: readonly string[]) {
+      return (await pool.query(`SELECT evidence_id AS "evidenceId", project_id AS "projectId", acp.readiness_evidence_fingerprint(e) AS "identityDigest"
+        FROM acp.evidence_records e WHERE evidence_id=ANY($1::text[]) ORDER BY evidence_id`, [ids])).rows;
+    }
+    async function pinned(ids: readonly string[]): Promise<PinnedProfileDiscoveryWrite> {
+      const { fields: _fields, ...identity } = terms();
+      return { ...identity, observations: ids.map(evidenceId => ({ fieldId: "context.product", value: "Synthetic", evidenceIds: [evidenceId] })), expectedEvidencePins: await pins(ids) };
+    }
+    const expectedRows = (row: PinnedProfileDiscoveryWrite) => row.expectedEvidencePins as Awaited<ReturnType<typeof pins>>;
+    await check("exact complete expectations retain server-derived pins without publishing or activating", async () => {
+      const row = await pinned([await evidence(), await evidence()]), before = await counts();
+      const saved = await store.recordPinnedDiscovery({ ...row, expectedEvidencePins: expectedRows(row).slice().reverse() });
+      assert.equal(saved.replayed, false); assert.deepEqual(saved.proposal.evidencePins, row.expectedEvidencePins);
+      assert.equal(saved.proposal.state, "needs_input"); assert.equal(saved.proposal.authority.activation, "not_authorized");
+      const after = await counts(); assert.equal(after.proposals, before.proposals + 1); assert.equal(after.pins, before.pins + 2);
+      for (const key of ["profiles", "grants", "runs", "effects", "missions"]) assert.equal(after[key], before[key]);
+      assert.deepEqual(await getProjectProfileProposal(pool, { projectId, proposalId: row.proposalId }), saved.proposal);
+    });
+    await check("empty discovery remains all missing and exact pin set failures leave no rows", async () => {
+      const empty = await pinned([]); assert.equal((await store.recordPinnedDiscovery(empty)).proposal.state, "needs_input");
+      const row = await pinned([await evidence()]), expected = expectedRows(row);
+      for (const invalid of [[], [...expected, ...expected], [{ ...expected[0], projectId: createStableId("project") }],
+        [{ ...expected[0], identityDigest: canonicalJsonDigest({ changed: true }) }]]) {
+        await assert.rejects(store.recordPinnedDiscovery({ ...row, expectedEvidencePins: invalid })); await absent(row.proposalId);
+      }
+    });
+    await check("new pinned writes reject stale, inaccessible, unhashed, restricted and future evidence", async () => {
+      for (const override of [{ freshness: "stale" }, { accessibility: "inaccessible" }, { content_hash: null },
+        { sensitivity: "restricted" }, { retrieved_at: "2099-01-01T00:00:00Z" }]) {
+        const row = await pinned([await evidence(override)]);
+        await assert.rejects(store.recordPinnedDiscovery(row), /expected evidence/u); await absent(row.proposalId);
+        if (!("sensitivity" in override) && !("retrieved_at" in override)) {
+          const { expectedEvidencePins: _pins, ...ordinary } = row;
+          assert.equal((await store.recordDiscovery(ordinary)).replayed, false, "ordinary drafts retain their looser discovery semantics");
+        }
+      }
+    });
+    await check("identity drift and non-fingerprint freshness or disclosure drift before locking reject", async () => {
+      for (const change of ["content_hash='sha256:changed'", "freshness='stale'", "sensitivity='restricted'"]) {
+        const id = await evidence(), row = await pinned([id]); let injected = false;
+        const intercepted = { options: pool.options, query: pool.query.bind(pool), async connect() {
+          const client = await pool.connect(); return { on: client.on.bind(client), off: client.off.bind(client),
+            async query(sql: string, values?: unknown[]) {
+              if (sql.includes("FOR SHARE OF e") && !injected) { injected = true; await pool.query(`UPDATE acp.evidence_records SET ${change} WHERE evidence_id=$1`, [id]); }
+              return client.query(sql, values);
+            }, release(discard?: Error | boolean) { client.release(discard); } };
+        } } as unknown as Pool;
+        await assert.rejects(new PostgresProfileProposalStore(intercepted, producer).recordPinnedDiscovery(row), /expected evidence/u);
+        assert.equal(injected, true); await absent(row.proposalId);
+      }
+    });
+    await check("held evidence lock excludes a concurrent mutation until commit without extending freshness afterward", async () => {
+      const id = await evidence(), row = await pinned([id]); let excluded = false;
+      const intercepted = { options: pool.options, query: pool.query.bind(pool), async connect() {
+        const client = await pool.connect(); return { on: client.on.bind(client), off: client.off.bind(client), async query(sql: string, values?: unknown[]) {
+          const result = await client.query(sql, values);
+          if (sql.includes("FOR SHARE OF e")) {
+            const updater = await pool.connect();
+            try { await updater.query("SET lock_timeout='100ms'");
+              await assert.rejects(updater.query("UPDATE acp.evidence_records SET freshness='stale' WHERE evidence_id=$1", [id]), /lock timeout/u); excluded = true;
+            } finally { updater.release(true); }
+          }
+          return result;
+        }, release(discard?: Error | boolean) { client.release(discard); } };
+      } } as unknown as Pool;
+      const saved = await new PostgresProfileProposalStore(intercepted, producer).recordPinnedDiscovery(row);
+      assert.equal(excluded, true); assert.deepEqual(saved.proposal.evidencePins, row.expectedEvidencePins);
+      await pool.query("UPDATE acp.evidence_records SET freshness='stale' WHERE evidence_id=$1", [id]);
+      assert.deepEqual(await store.recordPinnedDiscovery(row), { proposal: saved.proposal, replayed: true });
+    });
+    await check("returned pin mismatch is checked before COMMIT and rolls back actual parent and pin rows", async () => {
+      const row = await pinned([await evidence()]), seen: string[] = [];
+      const intercepted = { options: pool.options, query: pool.query.bind(pool), async connect() {
+        const client = await pool.connect(); return { on: client.on.bind(client), off: client.off.bind(client), async query(sql: string, values?: unknown[]) {
+          seen.push(sql); const result = await client.query(sql, values);
+          if (sql.startsWith("INSERT")) {
+            const body = JSON.parse(result.rows[0].body); body.evidencePins[0].identityDigest = canonicalJsonDigest({ wrong: true });
+            return { ...result, rows: [{ body: JSON.stringify(body) }] };
+          }
+          return result;
+        }, release(discard?: Error | boolean) { client.release(discard); } };
+      } } as unknown as Pool;
+      await assert.rejects(new PostgresProfileProposalStore(intercepted, producer).recordPinnedDiscovery(row), /expected evidence/u);
+      assert.equal(seen.includes("COMMIT"), false); assert.equal(seen.at(-1), "ROLLBACK"); await absent(row.proposalId);
+    });
+    await check("historical original pins replay after identity and restriction drift while replacement pins reject", async () => {
+      const id = await evidence(), row = await pinned([id]), saved = await store.recordPinnedDiscovery(row);
+      await pool.query("UPDATE acp.evidence_records SET content_hash='sha256:changed',sensitivity='restricted' WHERE evidence_id=$1", [id]);
+      assert.deepEqual(await store.recordPinnedDiscovery(row), { proposal: saved.proposal, replayed: true });
+      await assert.rejects(store.recordPinnedDiscovery({ ...row, expectedEvidencePins: await pins([id]) }), /expected evidence/u);
+      await assert.rejects(getProjectProfileProposal(pool, { projectId, proposalId: row.proposalId }), /unavailable/u);
+    });
+    for (const replay of [false, true]) await check(`lost COMMIT on pinned ${replay ? "historical replay" : "new admission"} discards the backend and recovers original pins`, async () => {
+      const row = await pinned([await evidence()]); if (replay) await store.recordPinnedDiscovery(row);
+      let pid = 0, discarded = false;
+      const intercepted = { options: pool.options, async query(sql: string, values?: unknown[]) { assert.equal(discarded, true); return pool.query(sql, values); }, async connect() {
+        const client = await pool.connect(); pid = (await client.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
+        return { on: client.on.bind(client), off: client.off.bind(client), async query(sql: string, values?: unknown[]) {
+          const result = await client.query(sql, values); if (sql === "COMMIT") throw new Error("synthetic pinned lost COMMIT"); return result;
+        }, release(discard?: Error | boolean) { assert.equal(discard, true); client.release(discard); discarded = true; } };
+      } } as unknown as Pool;
+      const saved = await new PostgresProfileProposalStore(intercepted, producer).recordPinnedDiscovery(row);
+      assert.equal(saved.replayed, true); assert.deepEqual(saved.proposal.evidencePins, row.expectedEvidencePins);
+      const until = Date.now() + 2000; let remains = true;
+      while (Date.now() < until) { remains = (await pool.query("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid=$1) AS remains", [pid])).rows[0].remains;
+        if (!remains) break; await new Promise(resolve => setTimeout(resolve, 10)); }
+      assert.equal(remains, false);
+    });
+    await check("lost COMMIT readback cannot substitute different retained pins", async () => {
+      const row = await pinned([await evidence()]);
+      const intercepted = { options: pool.options, async query(sql: string, values?: unknown[]) {
+        const result = await pool.query(sql, values), body = JSON.parse(result.rows[0].body);
+        body.evidencePins[0].identityDigest = canonicalJsonDigest({ wrongRecovery: true }); return { ...result, rows: [{ body: JSON.stringify(body) }] };
+      }, async connect() {
+        const client = await pool.connect(); return { on: client.on.bind(client), off: client.off.bind(client), async query(sql: string, values?: unknown[]) {
+          const result = await client.query(sql, values); if (sql === "COMMIT") throw new Error("synthetic pinned lost COMMIT"); return result;
+        }, release(discard?: Error | boolean) { client.release(discard); } };
+      } } as unknown as Pool;
+      await assert.rejects(new PostgresProfileProposalStore(intercepted, producer).recordPinnedDiscovery(row), /expected evidence/u);
+      assert.deepEqual((await store.recordPinnedDiscovery(row)).proposal.evidencePins, row.expectedEvidencePins);
+    });
+  }
   if (phase === "discovery") {
     await check("empty attributed discovery persists every unanswered field without inventing completeness", async () => {
       const { fields: _selected, ...identity } = terms(), before = await counts();

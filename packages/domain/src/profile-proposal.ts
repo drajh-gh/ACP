@@ -203,6 +203,16 @@ export function prepareProfileProposalFields(value: unknown) {
   return { fields, evidenceIds: ids };
 }
 
+/** Compare preconditions only: these opaque fingerprints neither prove source bytes nor grant authority. */
+export function preparePinnedProfileDiscovery(projectIdValue: unknown, observations: unknown, expectedEvidencePinsValue: unknown) {
+  const projectId = parseStableId(projectIdValue, "project");
+  const { fields, evidenceIds } = prepareProfileProposalFields(reduceProfileDiscoveryObservations(observations));
+  const expectedEvidencePins = boundedArray(expectedEvidencePinsValue, 1240).map(value => parsePin(value, projectId)).sort(compareEvidenceIds);
+  if (expectedEvidencePins.length !== evidenceIds.length
+    || expectedEvidencePins.some((pin, index) => pin.evidenceId !== evidenceIds[index])) throw new Error("Invalid expected evidence pins for profile discovery.");
+  return { fields, expectedEvidencePins };
+}
+
 /** Deterministic reduction of already-selected, already-redacted observations. No I/O or authority evaluation. */
 export function reduceProfileDiscoveryObservations(value: unknown): Readonly<Record<ProfileFieldId, ProfileProposalField>> {
   try {

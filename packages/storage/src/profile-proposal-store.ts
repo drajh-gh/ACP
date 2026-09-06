@@ -1,8 +1,8 @@
 import {
   buildProfileConfirmationRequest, canonicalJsonDigest, expectJsonValue, expectOnlyKeys, expectRecord,
   parseProfileProposalIdentity, parseProfileProposalProducer, parseProjectProfileProposal, parseProjectProfileProposalQuery,
-  prepareProfileProposalFields, profileProposalMaximumBytes, reduceProfileDiscoveryObservations,
-  type ProfileProposalIdentity, type ProfileProposalProducer, type ProjectProfileProposal, type ProjectProfileProposalQuery, type ProfileConfirmationRequest,
+  preparePinnedProfileDiscovery, prepareProfileProposalFields, profileProposalMaximumBytes, reduceProfileDiscoveryObservations,
+  type ProfileEvidencePin, type ProfileProposalIdentity, type ProfileProposalProducer, type ProjectProfileProposal, type ProjectProfileProposalQuery, type ProfileConfirmationRequest,
 } from "@acp/domain";
 import type { Pool, QueryResult, QueryResultRow } from "pg";
 import type { QueryExecutor } from "./database.ts";
@@ -11,6 +11,7 @@ import { parseExactProfileJson } from "./profile-proposal-json.ts";
 
 export interface ProfileProposalWrite extends ProfileProposalIdentity { readonly fields: unknown }
 export interface ProfileDiscoveryWrite extends ProfileProposalIdentity { readonly observations: unknown }
+export interface PinnedProfileDiscoveryWrite extends ProfileDiscoveryWrite { readonly expectedEvidencePins: unknown }
 /** Recorded proposal and review-request reads only. No producer, confirmation, publication or activation methods. */
 export interface ProjectProfileProposalPersistence {
   getProjectProfileProposal(query: ProjectProfileProposalQuery): Promise<ProjectProfileProposal | undefined>;
@@ -42,6 +43,20 @@ export class PostgresProfileProposalStore {
   }
 
   async record(value: ProfileProposalWrite): Promise<{ readonly proposal: ProjectProfileProposal; readonly replayed: boolean }> {
+    return this.recordPrepared(value);
+  }
+
+  /** New admissions require usable, exact evidence under locks; retries compare retained pins without renewal. */
+  async recordPinnedDiscovery(value: PinnedProfileDiscoveryWrite): Promise<{ readonly proposal: ProjectProfileProposal; readonly replayed: boolean }> {
+    const supplied = expectRecord(value, "pinned profile discovery write");
+    expectOnlyKeys(supplied, ["proposalId", "projectId", "candidateProfile", "baseProfile", "supersedesProposalId", "observations", "expectedEvidencePins"], "pinned profile discovery write");
+    const { observations, expectedEvidencePins: selectedPins, ...identity } = supplied;
+    const input = parseProfileProposalIdentity(identity);
+    const { fields, expectedEvidencePins } = preparePinnedProfileDiscovery(input.projectId, observations, selectedPins);
+    return this.recordPrepared({ ...input, fields }, expectedEvidencePins);
+  }
+
+  private async recordPrepared(value: ProfileProposalWrite, expectedEvidencePins?: readonly ProfileEvidencePin[]): Promise<{ readonly proposal: ProjectProfileProposal; readonly replayed: boolean }> {
     const supplied = expectRecord(value, "profile proposal write");
     expectOnlyKeys(supplied, ["proposalId", "projectId", "candidateProfile", "baseProfile", "supersedesProposalId", "fields"], "profile proposal write");
     const { fields: selected, ...identity } = supplied;
@@ -62,13 +77,19 @@ export class PostgresProfileProposalStore {
         await client.query("BEGIN");
         // Historical exact retries precede all current admission checks, never renew or re-pin.
         const previous = await load(client, input.proposalId);
-        if (previous) { const result = exactResult(previous, input, true); attempted = true; await client.query("COMMIT"); return result; }
+        if (previous) { const result = exactResult(previous, input, true, expectedEvidencePins); attempted = true; await client.query("COMMIT"); return result; }
+        // Match the proposal trigger's project -> baseline -> sorted evidence lock order.
+        if (expectedEvidencePins) {
+          const project = await client.query("SELECT project_id FROM acp.projects WHERE project_id=$1 FOR SHARE", [input.projectId]);
+          if (project.rows.length !== 1) throw new Error("profile discovery expected evidence project is unavailable");
+        }
         if (input.baseProfile) {
           const base = (await client.query(`SELECT CASE WHEN octet_length(profile::text)<=$4 THEN acp.jsonb_sha256(profile) END AS profile_digest
             FROM acp.project_profiles WHERE project_id=$1 AND profile_id=$2 AND version=$3 FOR SHARE`,
           [input.projectId,input.baseProfile.profileId,input.baseProfile.profileVersion,storageMaximumBytes])).rows[0];
           if (!base || base.profile_digest !== input.baseProfile.profileDigest) throw new Error("profile proposal baseline does not match exact retained content");
         }
+        if (expectedEvidencePins) await checkExpectedEvidence(client, input.projectId, expectedEvidencePins);
         attempted = true;
         const row = (await client.query(`INSERT INTO acp.project_profile_proposals
           (proposal_id,project_id,profile_id,profile_version,base_profile_version,base_profile_digest,supersedes_proposal_id,producer,fields)
@@ -78,7 +99,7 @@ export class PostgresProfileProposalStore {
           JSON.stringify(input.producer),JSON.stringify(input.fields)])).rows[0];
         if (!row) throw new Error("profile proposal insertion returned no body");
         // Domain semantics and canonical byte ceiling are checked before COMMIT, not just on a later read.
-        const result = exactResult(parseBody(row.body), input, false);
+        const result = exactResult(parseBody(row.body), input, false, expectedEvidencePins);
         await client.query("COMMIT"); return result;
       } catch (error) {
         try { await client.query("ROLLBACK"); } catch { /* Physical discard resolves uncertainty. */ }
@@ -88,7 +109,7 @@ export class PostgresProfileProposalStore {
       if (!attempted) throw error;
       let recovered: ProjectProfileProposal | undefined;
       try { recovered = await load(this.pool, input.proposalId); } catch { throw error; }
-      if (recovered) return exactResult(recovered, input, true);
+      if (recovered) return exactResult(recovered, input, true, expectedEvidencePins);
       throw error;
     }
   }
@@ -134,8 +155,22 @@ async function load(executor: QueryExecutor, proposalId: string) {
   const row = (await executor.query("SELECT CASE WHEN octet_length(body::text)<=$2 THEN body::text END AS body FROM acp.project_profile_proposals WHERE proposal_id=$1", [proposalId,storageMaximumBytes])).rows[0];
   return row ? parseBody(row.body) : undefined;
 }
-function exactResult(actual: ProjectProfileProposal, expected: ProfileProposalIdentity & { fields: unknown; producer: ProfileProposalProducer }, replayed: boolean) {
+async function checkExpectedEvidence(client: QueryExecutor, projectId: string, expected: readonly ProfileEvidencePin[]) {
+  const rows = (await client.query(`SELECT e.evidence_id AS "evidenceId", e.project_id AS "projectId",
+    acp.readiness_evidence_fingerprint(e) AS "identityDigest",
+    (e.sensitivity IN ('public','project_confidential') AND e.freshness='current' AND e.accessibility='available'
+      AND e.content_hash IS NOT NULL AND isfinite(e.observed_at) AND isfinite(e.retrieved_at)
+      AND e.observed_at >= timestamptz '0001-01-01 00:00:00+00' AND e.retrieved_at < timestamptz '10000-01-01 00:00:00+00'
+      AND e.observed_at <= e.retrieved_at AND e.retrieved_at <= clock_timestamp()) AS usable
+    FROM acp.evidence_records e WHERE e.project_id=$1 AND e.evidence_id=ANY($2::text[])
+    ORDER BY e.evidence_id FOR SHARE OF e`, [projectId, expected.map(pin => pin.evidenceId)])).rows;
+  if (rows.length !== expected.length || rows.some((row, index) => row.usable !== true
+    || row.evidenceId !== expected[index]!.evidenceId || row.projectId !== projectId
+    || row.identityDigest !== expected[index]!.identityDigest)) throw new Error("profile discovery expected evidence is changed or unusable");
+}
+function exactResult(actual: ProjectProfileProposal, expected: ProfileProposalIdentity & { fields: unknown; producer: ProfileProposalProducer }, replayed: boolean, expectedEvidencePins?: readonly ProfileEvidencePin[]) {
   const { proposedAt: _time, evidencePins: _pins, proposalSchemaVersion: _schema, state: _state, authority: _authority, proposalDigest: _digest, ...terms } = actual;
   if (digest(terms) !== digest(expected)) throw new Error("profile proposal aliases different terms or original producer identity");
+  if (expectedEvidencePins && digest(actual.evidencePins) !== digest(expectedEvidencePins)) throw new Error("profile discovery expected evidence differs from retained pins");
   return { proposal: actual, replayed };
 }

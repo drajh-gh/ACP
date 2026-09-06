@@ -28,6 +28,38 @@ This is a **private writer retry**, not the public disclosure path. Changed term
 or producer identity reject. Failed independent readback preserves uncertainty;
 a later explicit retry may recover the retained result.
 
+## Optional exact evidence preconditions
+
+The private `recordPinnedDiscovery` entrypoint accepts attributed observations and
+an exact complete set of `expectedEvidencePins`. Each pin contains only evidence
+ID, project ID and the opaque PostgreSQL identity fingerprint. The domain helper
+rejects malformed, duplicate, missing, extra or wrong-project pins before I/O and
+canonicalizes their order. Expectations are compare preconditions, not caller-owned
+stored pins; the server still derives the retained evidence set.
+
+For a new proposal ID, this entrypoint locks project, optional baseline and sorted
+evidence in the same order as the ledger trigger. While holding those locks it
+requires every expected fingerprint to match and every source to be current,
+available, hashed, public/project-confidential and temporally valid at the database
+clock. Freshness, accessibility and sensitivity are checked separately because
+they are not part of the identity fingerprint. The fully parsed INSERT result's
+server-derived pins must match before COMMIT. Competing evidence updates cannot
+pass the held row locks before that transaction finishes.
+
+Historical retries compare the original retained pins and all normalized terms
+before COMMIT, without current admission or re-pinning. The same pin comparison
+applies to fresh exact-ID readback after an uncertain commit and physical discard.
+A changed current fingerprint cannot replace the original expected pin under the
+same proposal ID. Successful replay is not evidence renewal or a currentness lease.
+
+This is an opt-in private producer protocol, not a new direct-SQL invariant:
+`record` and `recordDiscovery` intentionally retain their existing looser draft
+admission. No public writer, migration, caller migration or automatic coordinator
+is introduced. An opaque fingerprint does not prove source bytes, filesystem path,
+content-hash provenance or authority. In particular, this method does not bind the
+manifest adapter's supplied bytes/hash to a database source; secure acquisition and
+that separate durable binding remain future work.
+
 ## Immutable chains and evidence
 
 Each exact project/candidate tuple has one root and an unbranching successor chain.
@@ -137,3 +169,7 @@ The `regression` phase runs existing readiness core and read-only HTTP checks un
 SELECT-only database role, including full nonempty evidence, large escaped JSON,
 identity/freshness/disclosure drift, supersession, target publication and exact-
 numeric whole denial. Native worker/provisioner paths are unchanged.
+The `pinned` phase checks complete-set admission, stricter current usability,
+pre-lock drift, lock exclusion, pre-COMMIT returned-pin mismatch rollback,
+historical original-pin replay and lost-COMMIT exact-pin recovery against actual
+PostgreSQL. It also proves the older unpinned draft semantics remain available.
