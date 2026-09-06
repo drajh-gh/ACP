@@ -32,13 +32,17 @@ function fixture(options:{holdWrite?:boolean;throwWrite?:boolean;throwKill?:bool
   return {plan,binding,child,stdout,stderr,stdin,writes,owner,handle,abort,request,stop,feed,ready,accepted,physical,pids,
     get killed(){return killed;},finishWrite(){finishWrite?.();}};
 }
-it("provisioner process ownership sends one launch frame, reports both identities and awaits actual child close",async()=>{
+it("provisioner process ownership sends one launch frame, reports both identities and awaits actual child close",async t=>{
+  // This case controls pre-deadline closure. A real event-loop turn can exceed
+  // the fixture's 10 ms grace under load and correctly force an abort instead.
+  t.mock.timers.enable({apis:["setTimeout"]});
   const f=fixture(),session=await f.accepted();session.go();let settled=false;void session.closed.then(()=>{settled=true;});
   assert.equal(getEventListeners(f.abort.signal,"abort").length,1);
   f.feed({type:"closed",failed:false,stop:f.stop});await Promise.resolve();assert.equal(settled,false);assert.deepEqual(f.pids,[1234,5678]);
+  t.mock.timers.tick(9);assert.equal(settled,false);assert.equal(f.killed,0);
   assert.equal(f.writes.map(line=>(JSON.parse(line) as {type?:string}).type).includes("stop"),false);
   f.stdout.end();await new Promise<void>(resolve=>setImmediate(resolve));assert.equal(settled,false);assert.equal(f.handle.signal.aborted,false);
-  f.physical();assert.deepEqual(await session.closed,f.stop);assert.equal(f.handle.signal.aborted,false);assert.equal(getEventListeners(f.abort.signal,"abort").length,0);await pause(15);assert.equal(f.killed,0);
+  f.physical();assert.deepEqual(await session.closed,f.stop);assert.equal(f.handle.signal.aborted,false);assert.equal(getEventListeners(f.abort.signal,"abort").length,0);t.mock.timers.tick(15);assert.equal(f.killed,0);
 });
 it("provisioner process owner bounds a stalled bridge after valid provisional closure without another command",async()=>{
   const f=fixture(),session=await f.accepted();session.go();f.feed({type:"closed",failed:false,stop:f.stop});
