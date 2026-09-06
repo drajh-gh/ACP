@@ -5,6 +5,7 @@ param(
   [switch]$LaunchRecovery,
   [switch]$LaunchNative,
   [switch]$FilesystemBindings,
+  [switch]$RepositoryBindingOnly,
   [switch]$FilesystemNative,
   [switch]$FilesystemLeases,
   [switch]$FilesystemLeaseNative,
@@ -29,6 +30,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+if ($RepositoryBindingOnly -and ($LifecycleOnly -or $HostOnly -or $LaunchRecovery -or $LaunchNative -or $FilesystemBindings -or $FilesystemNative -or $FilesystemLeases -or $FilesystemLeaseNative -or $FilesystemLeaseChannelNative -or $WorktreeReservations -or $MigrationSessions -or $CounterpartStatus -or $ProvisionerPlans -or $Readiness -or $ProfileProposals)) { throw 'RepositoryBindingOnly is a standalone bounded gate' }
 if ($LaunchNative -and (-not $LaunchRecovery -or -not $LifecycleOnly)) { throw 'LaunchNative requires LaunchRecovery and LifecycleOnly to retain the bounded gate budget' }
 if ($HostOnly -and ($LifecycleOnly -or $LaunchRecovery)) { throw 'HostOnly cannot be combined with LifecycleOnly or LaunchRecovery' }
 if ($FilesystemBindings -and (-not $LifecycleOnly -or -not $LaunchRecovery -or $LaunchNative)) { throw 'FilesystemBindings requires LifecycleOnly and LaunchRecovery, without LaunchNative' }
@@ -114,6 +116,7 @@ if (-not $Internal) {
   if ($LaunchNative) { $commandLine += ' -LaunchNative' }
   if ($HostOnly) { $commandLine += ' -HostOnly' }
   if ($FilesystemBindings) { $commandLine += ' -FilesystemBindings' }
+  if ($RepositoryBindingOnly) { $commandLine += ' -RepositoryBindingOnly' }
   if ($FilesystemNative) { $commandLine += ' -FilesystemNative' }
   if ($FilesystemLeases) { $commandLine += ' -FilesystemLeases' }
   if ($FilesystemLeaseNative) { $commandLine += ' -FilesystemLeaseNative' }
@@ -361,13 +364,22 @@ try {
     Write-Host 'Migration session integration passed; removing only the owned disposable database container.'
     return
   }
-  if ($FilesystemLeaseChannelNative -or $WorktreeReservations -or $CounterpartStatus -or $ProvisionerPlans -or $Readiness -or $ProfileProposals) {
+  if ($RepositoryBindingOnly -or $FilesystemLeaseChannelNative -or $WorktreeReservations -or $CounterpartStatus -or $ProvisionerPlans -or $Readiness -or $ProfileProposals) {
     # Focused real database/native phases apply the same seeded schema directly.
     # Unrelated predecessor suites cannot consume their bounded child's budget.
-    foreach ($migration in @('0006_host_dispatch.sql', '0007_supervised_workers.sql', '0008_worker_recovery.sql',
+    $focusedMigrations = @('0006_host_dispatch.sql', '0007_supervised_workers.sql', '0008_worker_recovery.sql',
         '0009_lifecycle_context.sql', '0010_worker_handoff.sql', '0011_worker_launch_intents.sql',
-        '0012_worker_launch_recovery.sql', '0013_filesystem_bindings.sql', '0014_filesystem_writer_leases.sql')) {
+        '0012_worker_launch_recovery.sql', '0013_filesystem_bindings.sql')
+    if (-not $RepositoryBindingOnly) { $focusedMigrations += '0014_filesystem_writer_leases.sql' }
+    foreach ($migration in $focusedMigrations) {
       Invoke-AcpSqlFile ('packages/storage/migrations/' + $migration) ('Focused prerequisite schema: ' + $migration)
+    }
+    if ($RepositoryBindingOnly) {
+      Invoke-AcpSqlFile 'packages/storage/migrations/0013_filesystem_bindings.down.sql' '0013 empty registry downgrade'
+      Invoke-AcpSqlFile 'packages/storage/migrations/0013_filesystem_bindings.sql' '0013 empty registry re-upgrade'
+      Invoke-AcpNodeCheck 'packages/storage/test/integration/filesystem-bindings.ts' 'Isolated repository registry integration' -TimeoutSeconds 30
+      Write-Host 'Focused repository registry phase passed; no native observation, writer lease or Git mutation enabled.'
+      return
     }
     if ($ProfileProposals) {
       foreach ($migration in @('0015_worktree_target_holds.sql','0016_worktree_provisioner_attempts.sql','0017_capability_readiness.sql','0018_project_profile_proposals.sql')) {

@@ -53,3 +53,24 @@ and trusted native observation remain necessary. This is not a security boundary
 against a hostile same-user administrator. POSIX identity and cross-host/boot
 handling require explicit later contracts. Downgrade is allowed only before new
 binding history exists; it must not silently remove retained identity fencing.
+
+## Physical transaction containment
+
+Repository/worktree recording and both retirement operations explicitly opt into
+`withIsolatedTransaction`. Checked-out socket failures are sticky before/after
+queries; rollback failure cannot replace the original error; every client is
+physically discarded with its error listener still installed. The callback never
+retries automatically. A lost COMMIT response remains uncertain even if a record
+persisted, and only the caller's exact historical retry can reconcile it. No
+observation is refreshed, identity rebound, retirement removed or directory freed
+as part of that retry. Read-only registry queries remain outside this wrapper.
+
+The standalone `scripts/check-postgres.ps1 -RepositoryBindingOnly` gate applies
+the existing seeded schema through 0013, exercises an empty registry down/up,
+then runs the full registry fixture with a 30-second child bound inside the
+90-second owned job. It rejects other mode combinations, does not apply 0014,
+and never enables the fixture's native option. Post-INSERT backend death, injected
+BEGIN/ROLLBACK response loss, success/history disposal and all four lost-COMMIT
+paths are tested against real PostgreSQL. Synthetic identities do not constitute
+native observation evidence. Existing target-hold phases separately test 0015
+compatibility. Generic transaction users and active-writer renewal stay unchanged.

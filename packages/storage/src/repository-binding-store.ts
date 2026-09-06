@@ -2,7 +2,7 @@ import { isDeepStrictEqual } from "node:util";
 import { parseStableId, type StableId } from "@acp/domain";
 import type { Pool, QueryResultRow } from "pg";
 import { PostgresDispatchStore, type HostRuntimeRegistration } from "./dispatch-store.ts";
-import { withTransaction } from "./database.ts";
+import { withIsolatedTransaction } from "./isolated-transaction.ts";
 import { parseRepositoryBinding, parseWorktreeBinding, type RepositoryBindingInput, type WorktreeBindingInput } from "./repository-binding.ts";
 import type { WorkerRecoveryAuthority } from "./worker-recovery-store.ts";
 
@@ -18,7 +18,7 @@ export class PostgresRepositoryBindingStore {
   }
   async recordRepository(value: RepositoryBindingInput): Promise<RepositoryBindingInput> {
     const input = parseRepositoryBinding(value), a = this.authority;
-    return withTransaction(this.pool, async (client) => {
+    return withIsolatedTransaction(this.pool, async (client) => {
       await client.query("SELECT pg_advisory_xact_lock(hashtextextended('acp:filesystem-binding-record:'||$1,0))", [input.repositoryBindingId]);
       const existing = (await client.query("SELECT * FROM acp.repository_bindings WHERE repository_binding_id=$1", [input.repositoryBindingId])).rows[0];
       if (existing) {
@@ -38,7 +38,7 @@ export class PostgresRepositoryBindingStore {
   }
   async recordWorktree(value: WorktreeBindingInput): Promise<WorktreeBindingInput> {
     const input = parseWorktreeBinding(value), a = this.authority;
-    return withTransaction(this.pool, async (client) => {
+    return withIsolatedTransaction(this.pool, async (client) => {
       await client.query("SELECT pg_advisory_xact_lock(hashtextextended('acp:filesystem-binding-record:'||$1,0))", [input.worktreeBindingId]);
       const existing = (await client.query("SELECT * FROM acp.worktree_bindings WHERE worktree_binding_id=$1", [input.worktreeBindingId])).rows[0];
       if (existing) {
@@ -78,7 +78,7 @@ export class PostgresRepositoryBindingStore {
     parseStableId(provenanceId, "provenance");
     if (!reason.trim() || reason.length > 2000) throw new TypeError("bounded filesystem retirement reason required");
     const a = this.authority;
-    await withTransaction(this.pool, async (client) => {
+    await withIsolatedTransaction(this.pool, async (client) => {
       await client.query("SELECT pg_advisory_xact_lock(hashtextextended('acp:filesystem-binding-record:'||$1,0))", [id]);
       const existing = (await client.query(`SELECT * FROM acp.${table} WHERE ${key}=$1`, [id])).rows[0];
       if (existing) {

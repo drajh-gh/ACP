@@ -6,6 +6,7 @@ import "./counterpart-store.test.ts";
 import "./counterpart-status.test.ts";
 import "./worker-launch-store.test.ts";
 import "./repository-binding.test.ts";
+import "./repository-binding-session.test.ts";
 import "./filesystem-writer.test.ts";
 import "./worktree-reservation.test.ts";
 import "./worktree-reservation-session.test.ts";

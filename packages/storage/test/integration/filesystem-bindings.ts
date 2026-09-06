@@ -38,28 +38,94 @@ try {
       branchRef: "refs/heads/Feature/CaseSensitive", headRevision: "a".repeat(40), observedAt: await observedAt(), provenanceId: actor };
   }
   const repo = await repository(); let tree: WorktreeBindingInput;
-  function intercepted(mode: "lost_commit" | "close_before_commit") {
+  const sessions:{ pid:number;ended:Promise<void>;discard:Error|boolean|undefined }[]=[];
+  async function closedSessions(offset:number,count:number) {
+    const observed=sessions.slice(offset); assert.equal(observed.length,count);
+    assert.ok(observed.every((session)=>session.discard===true));
+    await Promise.all(observed.map((session)=>session.ended));
+    assert.equal((await pool.query("SELECT 1 FROM pg_stat_activity WHERE pid=ANY($1::integer[])",[observed.map((session)=>session.pid)])).rowCount,0);
+  }
+  function intercepted(mode: "ok" | "lost_commit" | "close_before_commit" | "killed_insert" | "lost_begin",lockId?:string) {
     return new PostgresRepositoryBindingStore({ options: pool.options, async connect() {
       const client = await pool.connect();
-      return { release: () => client.release(), async query<R extends QueryResultRow>(text: string, values?: unknown[]): Promise<QueryResult<R>> {
+      const session={ pid:Number((await client.query("SELECT pg_backend_pid() AS pid")).rows[0].pid),
+        ended:new Promise<void>((resolve)=>client.once("end",()=>resolve())),discard:undefined as Error|boolean|undefined };
+      sessions.push(session);
+      const failed=mode==="killed_insert" ? new Promise<void>((resolve)=>client.once("error",()=>resolve())) : undefined;
+      return { on:client.on.bind(client),off:client.off.bind(client),release:(discard?:Error|boolean)=>{
+        assert.equal(discard,true); assert.ok(client.listenerCount("error")>0); session.discard=discard; client.release(discard);
+      },async query<R extends QueryResultRow>(text: string, values?: unknown[]): Promise<QueryResult<R>> {
+        if(text==="ROLLBACK" && mode==="lost_begin") throw new Error("synthetic unavailable registry rollback acknowledgement");
         if (text === "COMMIT" && mode === "close_before_commit") {
           await client.query("UPDATE acp.worker_host_sessions SET state='closed' WHERE host_identifier=$1", [f.runtime.hostIdentifier]);
         }
         const result = await client.query<R>(text,values);
+        if(text==="BEGIN" && mode==="lost_begin") {
+          assert.ok(lockId);
+          await client.query("SELECT pg_advisory_xact_lock(hashtextextended('acp:filesystem-binding-record:'||$1,0))",[lockId]);
+          throw new Error("synthetic lost actual registry BEGIN acknowledgement");
+        }
+        if(mode==="killed_insert" && /^INSERT INTO acp\.(repository_bindings|worktree_bindings|repository_binding_retirements|worktree_binding_retirements)\(/u.test(text)) {
+          assert.equal((await pool.query("SELECT pg_terminate_backend($1) AS stopped",[session.pid])).rows[0].stopped,true);
+          await failed;
+        }
         if (text === "COMMIT" && mode === "lost_commit") throw new Error("synthetic lost commit acknowledgement");
         return result;
       } };
     } } as unknown as Pool, f.runtime);
   }
+  await check("all four registry mutations discard killed post-INSERT sessions without partial observations or retirement",async()=>{
+    for(const operation of ["recordRepository","recordWorktree","retireRepository","retireWorktree"] as const) {
+      const candidate=await repository();
+      if(operation!=="recordRepository") await store.recordRepository(candidate);
+      const child=await worktree(candidate),actor=await provenance();
+      if(operation==="retireWorktree") await store.recordWorktree(child);
+      const offset=sessions.length,killed=intercepted("killed_insert");
+      const action=operation==="recordRepository" ? killed.recordRepository(candidate) : operation==="recordWorktree" ? killed.recordWorktree(child)
+        : operation==="retireRepository" ? killed.retireRepository(candidate.repositoryBindingId,actor,"Rejected interrupted retirement.")
+        : killed.retireWorktree(child.worktreeBindingId,actor,"Rejected interrupted retirement.");
+      await assert.rejects(action,/terminating connection|connection terminated/iu); await closedSessions(offset,1);
+      const id=operation.endsWith("Repository") ? candidate.repositoryBindingId : child.worktreeBindingId;
+      assert.equal((await pool.query("SELECT pg_try_advisory_xact_lock(hashtextextended('acp:filesystem-binding-record:'||$1,0)) AS acquired",[id])).rows[0].acquired,true);
+      assert.equal((await store.loadRepository(candidate.repositoryBindingId))?.retired,operation==="recordRepository" ? undefined : false);
+      assert.equal((await store.loadWorktree(child.worktreeBindingId))?.retired,operation==="retireWorktree" ? false : undefined);
+      assert.equal((await pool.query("SELECT 1 FROM acp.repositories WHERE repository_id=$1",[candidate.repositoryId])).rowCount,operation==="recordRepository" ? 0 : 1);
+      assert.equal((await pool.query("SELECT 1 FROM acp.filesystem_directory_reservations WHERE binding_id=$1",[id])).rowCount,operation.startsWith("retire") ? 2 : 0);
+    }
+  });
+  await check("lost actual registry BEGIN response and unavailable rollback close the exact record lock",async()=>{
+    const candidate=await repository(),offset=sessions.length;
+    await assert.rejects(intercepted("lost_begin",candidate.repositoryBindingId).recordRepository(candidate),/lost actual registry BEGIN/u);
+    await closedSessions(offset,1);
+    assert.equal((await pool.query("SELECT pg_try_advisory_xact_lock(hashtextextended('acp:filesystem-binding-record:'||$1,0)) AS acquired",[candidate.repositoryBindingId])).rows[0].acquired,true);
+    assert.equal(await store.loadRepository(candidate.repositoryBindingId),undefined);
+    assert.equal((await pool.query("SELECT 1 FROM acp.repositories WHERE repository_id=$1",[candidate.repositoryId])).rowCount,0);
+    assert.equal((await pool.query("SELECT 1 FROM acp.filesystem_directory_reservations WHERE binding_id=$1",[candidate.repositoryBindingId])).rowCount,0);
+  });
   await check("exact repository/worktree observations replay without granting or fabricating a writer lease", async () => {
-    assert.deepEqual(await store.recordRepository(repo), repo); assert.deepEqual(await store.recordRepository(repo), repo);
-    tree = await worktree(repo); assert.deepEqual(await store.recordWorktree(tree), tree); assert.deepEqual(await store.recordWorktree(tree), tree);
+    const offset=sessions.length,tracked=intercepted("ok");
+    assert.deepEqual(await tracked.recordRepository(repo), repo); assert.deepEqual(await tracked.recordRepository(repo), repo);
+    tree = await worktree(repo); assert.deepEqual(await tracked.recordWorktree(tree), tree); assert.deepEqual(await tracked.recordWorktree(tree), tree);
+    await closedSessions(offset,4);
     assert.deepEqual(await store.loadWorktree(tree.worktreeBindingId), { binding: tree, retired: false });
     const row = (await pool.query("SELECT project_id,project_profile_id,project_profile_version FROM acp.worktree_bindings WHERE worktree_binding_id=$1", [tree.worktreeBindingId])).rows[0];
     assert.equal(row.project_id, a.packet.projectId); assert.equal(row.project_profile_id, a.packet.projectProfile.id);
     assert.equal(row.project_profile_version, a.packet.projectProfile.version);
     assert.equal((await pool.query("SELECT 1 FROM acp.resource_leases WHERE mission_id=$1", [a.a.missionId])).rowCount, 0);
     assert.equal((await pool.query("SELECT 1 FROM acp.worker_runs WHERE mission_id=$1", [a.a.missionId])).rowCount, 0);
+  });
+  await check("successful retirement and historical replay discard their sessions while retaining directory reservations",async()=>{
+    const parent=await repository(); await store.recordRepository(parent);
+    const child=await worktree(parent); await store.recordWorktree(child);
+    const actor=await provenance(),offset=sessions.length,tracked=intercepted("ok");
+    await tracked.retireWorktree(child.worktreeBindingId,actor,"Exact child retirement.");
+    await tracked.retireWorktree(child.worktreeBindingId,actor,"Exact child retirement.");
+    await tracked.retireRepository(parent.repositoryBindingId,actor,"Exact parent retirement.");
+    await tracked.retireRepository(parent.repositoryBindingId,actor,"Exact parent retirement.");
+    await closedSessions(offset,4);
+    assert.equal((await store.loadRepository(parent.repositoryBindingId))?.retired,true);
+    assert.equal((await store.loadWorktree(child.worktreeBindingId))?.retired,true);
+    assert.equal((await pool.query("SELECT 1 FROM acp.filesystem_directory_reservations WHERE binding_id=ANY($1)",[[parent.repositoryBindingId,child.worktreeBindingId]])).rowCount,4);
   });
   await check("SQL and TypeScript reject slash, traversal, device and stream aliases", async () => {
     for (const path of ["C:\\repo/child", "C:\\repo\\..\\child", "C:\\repo\\.\\child", "C:\\repo\\\\child", "C:\\repo\\", "C:\\NUL", "C:\\repo:stream", "C:\\repo."]) {
@@ -97,7 +163,7 @@ try {
     assert.equal((await pool.query("SELECT 1 FROM acp.repositories WHERE repository_id=ANY($1)", [[left.repositoryId,right.repositoryId]])).rowCount,1);
   });
   await check("lost commit acknowledgements retain one exact observation and retirement", async () => {
-    const recorded = await repository(), losing = intercepted("lost_commit");
+    const offset=sessions.length,recorded = await repository(), losing = intercepted("lost_commit");
     await assert.rejects(losing.recordRepository(recorded), /lost commit/u);
     assert.deepEqual(await store.recordRepository(recorded),recorded);
     const child = await worktree(recorded);
@@ -107,7 +173,13 @@ try {
     await assert.rejects(losing.retireWorktree(child.worktreeBindingId,actor,"Retained after lost acknowledgement."), /lost commit/u);
     await store.retireWorktree(child.worktreeBindingId,actor,"Retained after lost acknowledgement.");
     assert.equal((await store.loadWorktree(child.worktreeBindingId))?.retired,true);
+    await assert.rejects(losing.retireRepository(recorded.repositoryBindingId,actor,"Repository retirement after lost acknowledgement."),/lost commit/u);
+    await store.retireRepository(recorded.repositoryBindingId,actor,"Repository retirement after lost acknowledgement.");
+    assert.equal((await store.loadRepository(recorded.repositoryBindingId))?.retired,true);
     assert.equal((await pool.query("SELECT 1 FROM acp.filesystem_directory_reservations WHERE binding_id=ANY($1)", [[recorded.repositoryBindingId,child.worktreeBindingId]])).rowCount,4);
+    assert.equal((await pool.query("SELECT 1 FROM acp.repository_binding_retirements WHERE repository_binding_id=$1",[recorded.repositoryBindingId])).rowCount,1);
+    assert.equal((await pool.query("SELECT 1 FROM acp.worktree_binding_retirements WHERE worktree_binding_id=$1",[child.worktreeBindingId])).rowCount,1);
+    await closedSessions(offset,4);
   });
   await check("authority must remain valid at commit and failed commits release every reservation", async () => {
     const denied = intercepted("close_before_commit"), candidate = await repository(), child = await worktree(repo);

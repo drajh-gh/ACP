@@ -380,6 +380,13 @@ the enclosing owned native job must exit before the UUID fixture is removed.
 
 ### Existing worker and database gates
 
+`pwsh -NoProfile -File scripts/check-postgres.ps1 -RepositoryBindingOnly` is a
+standalone registry-only gate: seeded schema through 0013, empty down/up, immutable
+record/retirement and real connection-loss checks, and owned database cleanup.
+It excludes native observation, active-writer execution and all other mode flags.
+Registry transactions discard their physical sessions and preserve uncertainty;
+they never authorize creation, deletion, renewal or automatic retry.
+
 `scripts/check-postgres.ps1` applies all eleven ACP migrations, tests real DBOS
 host queues and supervised admission (including a native synthetic runner on
 Windows), kills a journaled native owner and recovers its durable state, reverses
@@ -396,7 +403,7 @@ fabricated process identities, not native process-stop evidence.
 deadlines, daemon loss, blocked pipes, exact recovery, namespace/identity denial,
 and aborted-inspector cleanup without model credentials or a database.
 The three `launch-fence` phases above
-separately tests permanent creation/resume fencing, consumed-ID replay, a real
+separately test permanent creation/resume fencing, consumed-ID replay, a real
 killed helper between CreateProcess and root journaling, exact unjournaled tree
 stop, Unicode paths, scope/directory substitution, partial records and hard links.
 It removes only its owned temporary seal fixtures after their actors exit;
