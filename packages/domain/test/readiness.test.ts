@@ -38,7 +38,11 @@ function evidence(overrides: Record<string, unknown> = {}) {
 }
 
 function snapshot(rows: readonly unknown[] = [assessment()], refs: readonly unknown[] = [evidence()], clock = asOf) {
-  return buildProjectReadiness(query, clock, rows, refs);
+  return buildProjectReadiness(query, clock, rows, refs, identities(rows));
+}
+
+function identities(rows: readonly unknown[]) {
+  return rows.map(row => ({ assessmentId: (row as { assessmentId: string }).assessmentId, matches: true }));
 }
 
 describe("exact readiness contracts", () => {
@@ -100,7 +104,8 @@ describe("read-only readiness projection", () => {
     const states = ["available", "degraded", "blocked", "unconfigured", "stale", "revoked", "unknown"];
     const keys = states.map(capability => ({ ...key, capability }));
     const rows = states.map(recordedState => assessment({ capability: recordedState, recordedState }));
-    const matrix = buildProjectReadiness({ ...query, keys }, asOf, rows, [evidence()]);
+    const matrix = buildProjectReadiness({ ...query, keys }, asOf, rows, [evidence()], identities(rows));
+    assert.equal(matrix.schemaVersion, "2.0.0");
     assert.deepEqual(matrix.entries.map(entry => entry.currentState), states);
     assert.deepEqual(matrix.assessment, { kind: "recorded_only", freshness: "recorded_deadline_and_evidence_metadata", authority: "none", liveProbes: "not_performed" });
     assert.equal(Object.hasOwn(matrix, "ready"), false);
@@ -162,7 +167,7 @@ describe("read-only readiness projection", () => {
     assert.throws(() => snapshot([assessment()], [evidence({ retrievedAt: "2026-09-06T00:00:00.000002Z" })]));
     assert.throws(() => snapshot([assessment()], [evidence({ contentHash: " " })]));
     assert.throws(() => snapshot([assessment()], [evidence(), evidence({ evidenceId: createStableId("evidence") })]));
-    const otherVersion = buildProjectReadiness({ ...query, profileVersion: "1.0.1" }, asOf, [], []);
+    const otherVersion = buildProjectReadiness({ ...query, profileVersion: "1.0.1" }, asOf, [], [], []);
     assert.equal(otherVersion.entries[0]?.currentState, "unknown");
   });
 
@@ -171,6 +176,7 @@ describe("read-only readiness projection", () => {
     const entry = matrix.entries[0]!;
     for (const altered of [
       { ...matrix, ready: true }, { ...matrix, projectId: createStableId("project") },
+      { ...matrix, schemaVersion: "1.0.0" },
       { ...matrix, entries: [] }, { ...matrix, entries: [entry, entry] },
       { ...matrix, entries: [{ ...entry, currentState: "available" }] },
       { ...matrix, entries: [{ ...entry, currentReasonCode: "recorded_assessment" }] },
@@ -181,6 +187,24 @@ describe("read-only readiness projection", () => {
   it("bounds total UTF-8 output instead of returning a favorable partial matrix", () => {
     const keys = Array.from({ length: 40 }, (_, i) => ({ ...key, capability: `capability-${i}` }));
     const rows = keys.map(item => assessment({ ...item, recordedReason: "界".repeat(1000) }));
-    assert.throws(() => buildProjectReadiness({ ...query, keys }, asOf, rows, [evidence()]), /bounded snapshot/);
+    assert.throws(() => buildProjectReadiness({ ...query, keys }, asOf, rows, [evidence()], identities(rows)), /bounded snapshot/);
+  });
+
+  it("requires an explicit identity comparison for each assessment and distinguishes identity drift from current metadata", () => {
+    const row = assessment();
+    const changed = buildProjectReadiness(query, asOf, [row], [evidence()], [{ assessmentId: row.assessmentId, matches: false }]);
+    assert.equal(changed.entries[0]?.currentState, "stale");
+    assert.equal(changed.entries[0]?.currentReasonCode, "supporting_evidence_identity_changed");
+    assert.equal(changed.entries[0]?.evidenceIdentityMatches, false);
+    assert.equal(changed.evidence[0]?.contentHashPresent, true);
+    assert.equal(changed.evidence[0]?.freshness, "current");
+    assert.deepEqual(parseProjectReadiness(changed, query), changed);
+    for (const matches of [[], [{ assessmentId: row.assessmentId, matches: "true" }],
+      [{ assessmentId: row.assessmentId, matches: true }, { assessmentId: row.assessmentId, matches: false }],
+      [{ assessmentId: createStableId("capabilityReadinessAssessment"), matches: true }]]) {
+      assert.throws(() => buildProjectReadiness(query, asOf, [row], [evidence()], matches));
+    }
+    const revoked = assessment({ recordedState: "revoked" });
+    assert.equal(buildProjectReadiness(query, asOf, [revoked], [evidence()], [{ assessmentId: revoked.assessmentId, matches: false }]).entries[0]?.currentState, "revoked");
   });
 });

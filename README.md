@@ -14,9 +14,9 @@ deployed autonomous service.
 - completion-contract evaluation that cannot imply sibling lifecycle state
 - runtime-validated intake, claim, approval, workflow, capability, readiness,
   and reconciliation contracts
-- an additive pure readiness matrix with exact profile/resource identity,
-  microsecond expiry, persistent revocation semantics and metadata-only evidence;
-  no durable readiness writer or MCP readiness tool is enabled yet
+- an additive recorded readiness matrix with exact profile/resource identity,
+  microsecond expiry, persistent revocation semantics, immutable assessment/evidence
+  pins and bounded single-snapshot reads; no MCP readiness tool is enabled yet
 - deterministic effect-transition, approval-drift, cursor, and kill-switch
   guards
 - reversible PostgreSQL migrations, an up/down-checksum-aware runner, and stores for
@@ -122,6 +122,13 @@ pwsh -NoProfile -File scripts/check-postgres.ps1 -ProvisionerPlans races
 pwsh -NoProfile -File scripts/check-postgres.ps1 -ProvisionerPlans expiry
 pwsh -NoProfile -File scripts/check-postgres.ps1 -ProvisionerPlans upgrade
 pwsh -NoProfile -File scripts/check-postgres.ps1 -ProvisionerPlans regression
+pwsh -NoProfile -File scripts/check-postgres.ps1 -Readiness core
+pwsh -NoProfile -File scripts/check-postgres.ps1 -Readiness races
+pwsh -NoProfile -File scripts/check-postgres.ps1 -Readiness expiry
+pwsh -NoProfile -File scripts/check-postgres.ps1 -Readiness limits
+pwsh -NoProfile -File scripts/check-postgres.ps1 -Readiness snapshot
+pwsh -NoProfile -File scripts/check-postgres.ps1 -Readiness upgrade
+pwsh -NoProfile -File scripts/check-postgres.ps1 -Readiness regression
 pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery
 pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery -LaunchNative
 pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery -FilesystemBindings
@@ -225,6 +232,12 @@ and test inert immutable attempt plans, expiry/race denial, history-preserving
 downgrade and predecessor target holds. Directory identities and paths are
 synthetic metadata; no native fence or worktree is created. See
 [the provisioner-plan contract](docs/architecture/0017-inert-provisioner-plans.md).
+The standalone `Readiness` phases apply seeded PostgreSQL through 0017. They check
+immutable assessment/evidence history, exact supersession and uncertain-response
+replay, expiry, bounded disclosure, one-snapshot consistency and retained rollback.
+The regression phase runs the prior counterpart-status and inert-plan core checks
+sequentially under 0017. No live probes, readiness MCP writer or execution authority
+is enabled. See [the readiness contract](docs/architecture/0019-recorded-capability-readiness.md).
 The two `provisioner-observation` phases run sequentially in disposable native
 Git fixtures, checking actual parent/base/absence, case/prefix conflicts, bounded
 metadata, deterministic between-check mutations and process/pin cleanup. The

@@ -9,3 +9,4 @@ import "./repository-binding.test.ts";
 import "./filesystem-writer.test.ts";
 import "./worktree-reservation.test.ts";
 import "./worktree-provisioner.test.ts";
+import "./readiness-store.test.ts";

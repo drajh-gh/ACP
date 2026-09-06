@@ -4,12 +4,13 @@ import { capabilityReadinessStates, type CapabilityReadinessState } from "./reco
 import { expectArray, expectBoolean, expectEnum, expectIsoTimestamp, expectOnlyKeys, expectRecord, expectString } from "./validation.ts";
 
 export const readinessKeyLimit = 50;
+export const projectReadinessSchemaVersion = "2.0.0";
 export const readinessEvidenceLimit = 20;
 export const readinessMaximumBytes = 65_536;
 export const readinessMaximumValidityMicroseconds = 86_400_000_000n;
 export const readinessCurrentReasonCodes = [
   "not_assessed", "recorded_unknown", "recorded_revocation", "assessment_expired",
-  "supporting_evidence_unusable", "recorded_assessment",
+  "supporting_evidence_identity_changed", "supporting_evidence_unusable", "recorded_assessment",
 ] as const;
 
 export interface ReadinessKey {
@@ -52,6 +53,7 @@ export interface ReadinessEvidenceMetadata {
 
 export interface ReadinessEntry extends ReadinessKey {
   readonly recorded: ReadinessAssessment | null;
+  readonly evidenceIdentityMatches: boolean | null;
   readonly currentState: CapabilityReadinessState;
   readonly currentReasonCode: (typeof readinessCurrentReasonCodes)[number];
 }
@@ -62,7 +64,7 @@ const assessmentScope = {
 } as const;
 
 export interface ProjectReadiness {
-  readonly schemaVersion: "1.0.0";
+  readonly schemaVersion: typeof projectReadinessSchemaVersion;
   readonly projectId: StableId<"project">;
   readonly profileId: StableId<"projectProfile">;
   readonly profileVersion: string;
@@ -146,12 +148,14 @@ export function parseReadinessAssessment(value: unknown): ReadinessAssessment {
  */
 export function buildProjectReadiness(
   queryValue: unknown, asOfValue: unknown, selectedLatest: unknown, selectedEvidence: unknown,
+  selectedIdentityMatches: unknown,
 ): ProjectReadiness {
   const query = parseProjectReadinessQuery(queryValue);
   const asOf = parseReadinessTimestamp(asOfValue);
   const clock = readinessTimestampMicroseconds(asOf);
   let rows: ReadinessAssessment[];
   let evidence: ReadinessEvidenceMetadata[];
+  const identityMatches = new Map<string, boolean>();
   try {
     rows = boundedArray(selectedLatest, "selected readiness", readinessKeyLimit).map(parseReadinessAssessment);
     const requested = new Set(query.keys.map(readinessKeyIdentity));
@@ -164,6 +168,14 @@ export function buildProjectReadiness(
       found.add(key);
       assessmentIds.add(row.assessmentId);
     }
+    for (const value of boundedArray(selectedIdentityMatches, "readiness identity comparisons", readinessKeyLimit)) {
+      const input = expectRecord(value, "readiness identity comparison");
+      expectOnlyKeys(input, ["assessmentId", "matches"], "readiness identity comparison");
+      const id = parseStableId(input.assessmentId, "capabilityReadinessAssessment");
+      if (!assessmentIds.has(id) || identityMatches.has(id)) throw new Error(invalidReferences);
+      identityMatches.set(id, expectBoolean(input.matches, "readiness evidence identity match"));
+    }
+    if (identityMatches.size !== assessmentIds.size) throw new Error(invalidReferences);
     const referenced = new Set(rows.flatMap(row => row.evidenceIds));
     const seen = new Set<string>();
     evidence = boundedArray(selectedEvidence, "selected evidence", readinessKeyLimit * readinessEvidenceLimit).map(value => {
@@ -187,10 +199,11 @@ export function buildProjectReadiness(
   const byKey = new Map(rows.map(row => [readinessKeyIdentity(row), row]));
   const byEvidence = new Map(evidence.map(item => [item.evidenceId, item]));
   const result: ProjectReadiness = {
-    schemaVersion: "1.0.0", projectId: query.projectId, profileId: query.profileId, profileVersion: query.profileVersion,
+    schemaVersion: projectReadinessSchemaVersion, projectId: query.projectId, profileId: query.profileId, profileVersion: query.profileVersion,
     asOf, assessment: { ...assessmentScope }, entries: query.keys.map(key => {
       const recorded = byKey.get(readinessKeyIdentity(key)) ?? null;
-      return { ...key, recorded, ...currentAssessment(recorded, clock, byEvidence) };
+      const evidenceIdentityMatches = recorded === null ? null : identityMatches.get(recorded.assessmentId)!;
+      return { ...key, recorded, evidenceIdentityMatches, ...currentAssessment(recorded, clock, byEvidence, evidenceIdentityMatches) };
     }), evidence,
   };
   assertSize(result);
@@ -203,7 +216,7 @@ export function parseProjectReadiness(value: unknown, queryValue: unknown): Proj
   const input = expectRecord(value, "project readiness");
   expectOnlyKeys(input, ["schemaVersion", ...scopeFields, "asOf", "assessment", "entries", "evidence"], "project readiness");
   const query = parseProjectReadinessQuery(queryValue);
-  if (input.schemaVersion !== "1.0.0" || !sameScope(query, parseScope(input))) throw new TypeError("readiness snapshot identity mismatch");
+  if (input.schemaVersion !== projectReadinessSchemaVersion || !sameScope(query, parseScope(input))) throw new TypeError("readiness snapshot identity mismatch");
   const asOf = parseReadinessTimestamp(input.asOf);
   const clock = readinessTimestampMicroseconds(asOf);
   const scope = expectRecord(input.assessment, "readiness assessment scope");
@@ -213,9 +226,10 @@ export function parseProjectReadiness(value: unknown, queryValue: unknown): Proj
   }
   const entries = boundedArray(input.entries, "readiness entries", readinessKeyLimit, 1).map(value => {
     const entry = expectRecord(value, "readiness entry");
-    expectOnlyKeys(entry, [...keyFields, "recorded", "currentState", "currentReasonCode"], "readiness entry");
+    expectOnlyKeys(entry, [...keyFields, "recorded", "evidenceIdentityMatches", "currentState", "currentReasonCode"], "readiness entry");
     return {
       ...parseKey(entry), recorded: entry.recorded === null ? null : parseReadinessAssessment(entry.recorded),
+      evidenceIdentityMatches: entry.evidenceIdentityMatches === null ? null : expectBoolean(entry.evidenceIdentityMatches, "readiness evidence identity match"),
       currentState: expectEnum(entry.currentState, capabilityReadinessStates, "readiness current state"),
       currentReasonCode: expectEnum(entry.currentReasonCode, readinessCurrentReasonCodes, "readiness current reason"),
     };
@@ -229,7 +243,7 @@ export function parseProjectReadiness(value: unknown, queryValue: unknown): Proj
     evidenceId: item.evidenceId, projectId: query.projectId, observedAt: item.observedAt, retrievedAt: item.retrievedAt,
     contentHash: item.contentHashPresent ? "recorded-hash-present" : null, sensitivity: "project_confidential",
     freshness: item.freshness, accessibility: item.accessibility,
-  })));
+  })), entries.flatMap(entry => entry.recorded === null ? [] : [{ assessmentId: entry.recorded.assessmentId, matches: entry.evidenceIdentityMatches }]));
   if (JSON.stringify(entries) !== JSON.stringify(rebuilt.entries) || JSON.stringify(evidence) !== JSON.stringify(rebuilt.evidence)) {
     throw new TypeError("readiness snapshot derived state or evidence mismatch");
   }
@@ -238,11 +252,13 @@ export function parseProjectReadiness(value: unknown, queryValue: unknown): Proj
 
 function currentAssessment(
   row: ReadinessAssessment | null, clock: bigint, evidence: ReadonlyMap<string, ReadinessEvidenceMetadata>,
+  identityMatches: boolean | null,
 ): Pick<ReadinessEntry, "currentState" | "currentReasonCode"> {
   if (row === null) return { currentState: "unknown", currentReasonCode: "not_assessed" };
   if (row.recordedState === "unknown") return { currentState: "unknown", currentReasonCode: "recorded_unknown" };
   if (row.recordedState === "revoked") return { currentState: "revoked", currentReasonCode: "recorded_revocation" };
   if (clock >= readinessTimestampMicroseconds(row.validUntil)) return { currentState: "stale", currentReasonCode: "assessment_expired" };
+  if (isPositive(row.recordedState) && identityMatches !== true) return { currentState: "stale", currentReasonCode: "supporting_evidence_identity_changed" };
   if (isPositive(row.recordedState) && row.evidenceIds.some(id => {
     const item = evidence.get(id);
     return !item || !item.contentHashPresent || item.freshness !== "current" || item.accessibility !== "available";

@@ -16,6 +16,8 @@ param(
   [string]$CounterpartStatus,
   [ValidateSet('core', 'races', 'expiry', 'upgrade', 'regression')]
   [string]$ProvisionerPlans,
+  [ValidateSet('core', 'races', 'expiry', 'limits', 'snapshot', 'upgrade', 'regression')]
+  [string]$Readiness,
   [switch]$MigrationSessions,
   [Parameter(DontShow)]
   [switch]$Internal,
@@ -36,6 +38,7 @@ if ($WorktreeReservations -and (-not $FilesystemLeases -or $FilesystemLeaseNativ
 if ($MigrationSessions -and ($LifecycleOnly -or $HostOnly -or $LaunchRecovery -or $LaunchNative -or $FilesystemBindings -or $FilesystemNative -or $FilesystemLeases -or $FilesystemLeaseNative -or $FilesystemLeaseChannelNative -or $WorktreeReservations)) { throw 'MigrationSessions is a standalone bounded gate' }
 if ($CounterpartStatus -and ($LifecycleOnly -or $HostOnly -or $LaunchRecovery -or $LaunchNative -or $FilesystemBindings -or $FilesystemNative -or $FilesystemLeases -or $FilesystemLeaseNative -or $FilesystemLeaseChannelNative -or $WorktreeReservations -or $MigrationSessions)) { throw 'CounterpartStatus is a standalone bounded gate' }
 if ($ProvisionerPlans -and ($LifecycleOnly -or $HostOnly -or $LaunchRecovery -or $LaunchNative -or $FilesystemBindings -or $FilesystemNative -or $FilesystemLeases -or $FilesystemLeaseNative -or $FilesystemLeaseChannelNative -or $WorktreeReservations -or $MigrationSessions -or $CounterpartStatus)) { throw 'ProvisionerPlans is a standalone bounded gate' }
+if ($Readiness -and ($LifecycleOnly -or $HostOnly -or $LaunchRecovery -or $LaunchNative -or $FilesystemBindings -or $FilesystemNative -or $FilesystemLeases -or $FilesystemLeaseNative -or $FilesystemLeaseChannelNative -or $WorktreeReservations -or $MigrationSessions -or $CounterpartStatus -or $ProvisionerPlans)) { throw 'Readiness is a standalone bounded gate' }
 
 . (Join-Path $PSScriptRoot 'native-channel-fixture.ps1')
 
@@ -115,6 +118,7 @@ if (-not $Internal) {
   if ($WorktreeReservations) { $commandLine += ' -WorktreeReservations ' + $WorktreeReservations }
   if ($CounterpartStatus) { $commandLine += ' -CounterpartStatus ' + $CounterpartStatus }
   if ($ProvisionerPlans) { $commandLine += ' -ProvisionerPlans ' + $ProvisionerPlans }
+  if ($Readiness) { $commandLine += ' -Readiness ' + $Readiness }
   if ($MigrationSessions) { $commandLine += ' -MigrationSessions' }
   $integrationProcess = $null
   $channelRoot = $null
@@ -353,13 +357,26 @@ try {
     Write-Host 'Migration session integration passed; removing only the owned disposable database container.'
     return
   }
-  if ($FilesystemLeaseChannelNative -or $WorktreeReservations -or $CounterpartStatus -or $ProvisionerPlans) {
+  if ($FilesystemLeaseChannelNative -or $WorktreeReservations -or $CounterpartStatus -or $ProvisionerPlans -or $Readiness) {
     # Focused real database/native phases apply the same seeded schema directly.
     # Unrelated predecessor suites cannot consume their bounded child's budget.
     foreach ($migration in @('0006_host_dispatch.sql', '0007_supervised_workers.sql', '0008_worker_recovery.sql',
         '0009_lifecycle_context.sql', '0010_worker_handoff.sql', '0011_worker_launch_intents.sql',
         '0012_worker_launch_recovery.sql', '0013_filesystem_bindings.sql', '0014_filesystem_writer_leases.sql')) {
       Invoke-AcpSqlFile ('packages/storage/migrations/' + $migration) ('Focused prerequisite schema: ' + $migration)
+    }
+    if ($Readiness) {
+      Invoke-AcpSqlFile 'packages/storage/migrations/0015_worktree_target_holds.sql' 'Readiness prerequisite: 0015 target holds'
+      Invoke-AcpSqlFile 'packages/storage/migrations/0016_worktree_provisioner_attempts.sql' 'Readiness prerequisite: 0016 inert plans'
+      Invoke-AcpSqlFile 'packages/storage/migrations/0017_capability_readiness.sql' '0017 recorded readiness'
+      if ($Readiness -eq 'regression') {
+        Invoke-AcpNodeCheck 'packages/storage/test/integration/counterpart-status.ts' 'Recorded counterpart regression under 0017' 'core' -TimeoutSeconds 30
+        Invoke-AcpNodeCheck 'packages/storage/test/integration/worktree-provisioner.ts' 'Inert provisioner regression under 0017' 'core' -TimeoutSeconds 30
+      } else {
+        Invoke-AcpNodeCheck 'packages/storage/test/integration/readiness.ts' 'Recorded readiness integration' $Readiness -TimeoutSeconds 30
+      }
+      Write-Host 'Focused recorded readiness phase passed; no live probes or execution authority enabled.'
+      return
     }
     if ($ProvisionerPlans) {
       Invoke-AcpSqlFile 'packages/storage/migrations/0015_worktree_target_holds.sql' 'Provisioner prerequisite: 0015 target holds'
