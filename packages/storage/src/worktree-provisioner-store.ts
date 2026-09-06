@@ -1,6 +1,7 @@
 import { expectEnum,expectIsoTimestamp,expectString,parseStableId,type StableId } from "@acp/domain";
 import type { Pool,QueryResultRow } from "pg";
-import { withTransaction,type QueryExecutor } from "./database.ts";
+import type { QueryExecutor } from "./database.ts";
+import { withProvisionerPlanTransaction } from "./provisioner-transaction.ts";
 import { PostgresDispatchStore,type HostRuntimeRegistration } from "./dispatch-store.ts";
 import { parseCanonicalWindowsBindingPath,parseWindowsDirectoryBinding } from "./repository-binding.ts";
 import type { WorkerRecoveryAuthority } from "./worker-recovery-store.ts";
@@ -19,7 +20,7 @@ export class PostgresWorktreeProvisionerStore {
   }
   async plan(value:WorktreeProvisionerAttemptInput):Promise<WorktreeProvisionerAttempt> {
     const input=parseWorktreeProvisionerAttempt(value),a=this.authority;
-    return withTransaction(this.pool,async(client)=>{
+    return withProvisionerPlanTransaction(this.pool,async(client)=>{
       await client.query("SELECT acp.lock_worktree_provisioner_plan($1)",[input.reservationId]);
       const old=await this.row(client,input.attemptId);
       if(old) {

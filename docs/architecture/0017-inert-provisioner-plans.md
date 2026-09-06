@@ -59,6 +59,17 @@ precision, SQL compares instants, and JSON readback preserves all six digits.
 Changed terms or owner reject. A second attempt cannot claim the same hold,
 even after the old attempt expired. No stop evidence or retry authority exists.
 
+The private planning transaction now listens for checked-out physical connection
+errors and checks that state before and after every query. A known failed socket
+receives no further statement. Cleanup preserves the original failure even when
+ROLLBACK also fails and always discards the physical client, including successful
+historical replay, before removing its error listener. Lost COMMIT acknowledgement
+remains an uncertain result, not evidence of absence: the caller may retry only
+the exact immutable plan identity and terms through the existing historical path.
+There is no automatic re-admission, retry loop, deadline renewal or native launch.
+Read-only inventory stays a single pool query. This change is isolated to the
+provisioner store; other users of the generic transaction helper are unchanged.
+
 `planned` means only that the retained record still matches its captured hold
 revision and original live owner/deadline. A later heartbeat, expiry, admission,
 cancellation, retirement or replacement owner makes it `recovering`. Neither

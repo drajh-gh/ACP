@@ -51,7 +51,8 @@ try {
   function intercepted(beforeCommit:(client:{ query:Pool["query"] })=>Promise<void>,lost=false) {
     return new PostgresWorktreeProvisionerStore({ options:pool.options,async connect() {
       const client=await pool.connect();
-      return { release:()=>client.release(),async query<R extends QueryResultRow>(text:string,values?:unknown[]):Promise<QueryResult<R>> {
+      return { release:(discard?:Error|boolean)=>client.release(discard),on:client.on.bind(client),off:client.off.bind(client),
+        async query<R extends QueryResultRow>(text:string,values?:unknown[]):Promise<QueryResult<R>> {
         if(text==="COMMIT") await beforeCommit(client);
         const result=await client.query<R>(text,values);
         if(text==="COMMIT" && lost) throw new Error("synthetic lost actual plan COMMIT acknowledgement");
@@ -76,6 +77,58 @@ try {
     throw new Error("actual provisioner statement did not block on the exact incumbent");
   }
   if(phase==="core") {
+    await check("lost actual BEGIN and failed rollback acknowledgement close the transaction and release its exact lock",async()=>{
+      const x=await target(),failure=new Error("synthetic lost actual BEGIN acknowledgement"),releases:(Error|boolean|undefined)[]=[],queries:string[]=[];
+      const key=`provisioner-session:${x.input.attemptId}`;
+      let backendPid=0,ended:Promise<void>|undefined;
+      const uncertain=new PostgresWorktreeProvisionerStore({ options:pool.options,async connect() {
+        const client=await pool.connect();
+        backendPid=Number((await client.query("SELECT pg_backend_pid() AS pid")).rows[0].pid);
+        ended=new Promise<void>((resolve)=>client.once("end",()=>resolve()));
+        return { on:client.on.bind(client),off:client.off.bind(client),release:(discard?:Error|boolean)=>{
+          releases.push(discard); client.release(discard);
+        },async query<R extends QueryResultRow>(text:string,values?:unknown[]):Promise<QueryResult<R>> {
+          queries.push(text);
+          if(text==="ROLLBACK") throw new Error("synthetic unavailable rollback response");
+          const result=await client.query<R>(text,values);
+          if(text==="BEGIN") {
+            await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[key]);
+            throw failure;
+          }
+          return result;
+        } };
+      } } as unknown as Pool,f.runtime);
+      await assert.rejects(uncertain.plan(x.input),(error)=>error===failure); await ended;
+      assert.deepEqual(releases,[true]); assert.deepEqual(queries,["BEGIN","ROLLBACK"]);
+      assert.equal((await pool.query("SELECT 1 FROM pg_stat_activity WHERE pid=$1",[backendPid])).rowCount,0);
+      assert.equal((await pool.query("SELECT pg_try_advisory_xact_lock(hashtextextended($1,0)) AS acquired",[key])).rows[0].acquired,true);
+      await absent(x.input); assert.deepEqual(await holds.load(x.hold.reservationId),x.hold);
+    });
+    await check("a killed physical planning session is discarded before exact retry without orphaned transaction or event",async()=>{
+      const x=await target(),releases:(Error|boolean|undefined)[]=[],queries:string[]=[];
+      let backendPid=0,closed:Promise<void>;
+      const guarded=new PostgresWorktreeProvisionerStore({ options:pool.options,async connect() {
+        const client=await pool.connect();
+        backendPid=Number((await client.query("SELECT pg_backend_pid() AS pid")).rows[0].pid);
+        closed=new Promise<void>((resolve)=>client.once("error",()=>resolve()));
+        return { on:client.on.bind(client),off:client.off.bind(client),release:(discard?:Error|boolean)=>{
+          releases.push(discard); client.release(discard);
+        },async query<R extends QueryResultRow>(text:string,values?:unknown[]):Promise<QueryResult<R>> {
+          queries.push(text); const result=await client.query<R>(text,values);
+          if(text.includes("lock_worktree_provisioner_plan")) {
+            assert.equal((await pool.query("SELECT pg_terminate_backend($1) AS stopped",[backendPid])).rows[0].stopped,true);
+            await closed;
+          }
+          return result;
+        } };
+      } } as unknown as Pool,f.runtime);
+      await assert.rejects(guarded.plan(x.input),/terminating connection|connection terminated/iu);
+      assert.deepEqual(releases,[true]); assert.equal(queries.length,2); assert.equal(queries[0],"BEGIN");
+      assert.equal((await pool.query("SELECT 1 FROM pg_stat_activity WHERE pid=$1",[backendPid])).rowCount,0);
+      await absent(x.input); assert.deepEqual(await holds.load(x.hold.reservationId),x.hold);
+      const retried=await plans.plan(x.input); assert.equal(retried.attemptId,x.input.attemptId);
+      assert.equal(retried.deadlineAt,await exactTime(x.input.deadlineAt));
+    });
     await check("direct-root prospective targets are explicitly unsupported without widening native parent-path handling",async()=>{
       const x=await target(15000,60000,true);
       await assert.rejects(direct(pool,{ ...x.input,reportedParent:{ ...x.input.reportedParent,path:"C:\\" } }),/direct-root/u);
