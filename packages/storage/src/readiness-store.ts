@@ -3,7 +3,7 @@ import {
   parseReadinessAssessment, parseStableId, readinessMaximumBytes,
   type ProjectReadiness, type ProjectReadinessQuery, type ReadinessAssessment, type StableId,
 } from "@acp/domain";
-import type { Pool } from "pg";
+import type { Pool, QueryResult, QueryResultRow } from "pg";
 import type { QueryExecutor } from "./database.ts";
 import { projectReadinessSql } from "./readiness-query.ts";
 
@@ -45,7 +45,7 @@ export class PostgresReadinessAssessmentStore {
     try { return await withReadinessTransaction(this.pool, async client => {
       // Immutable historical replay is checked before current binding/evidence admission.
       const previous = await load(client, input.assessmentId);
-      if (previous) return exactResult(previous, input, true);
+      if (previous) { const result = exactResult(previous, input, true); attempted = true; return result; }
       attempted = true;
       const inserted = await client.query(`INSERT INTO acp.capability_readiness_assessments
         (assessment_id,project_id,profile_id,profile_version,capability,resource_key,resource_version,recorded_state,recorded_reason,
@@ -94,7 +94,16 @@ function exactResult(actual: ReadinessAssessment, expected: ReadinessAssessment,
 }
 
 async function withReadinessTransaction<T>(pool: Pool, action: (client: QueryExecutor) => Promise<T>): Promise<T> {
-  const client = await pool.connect();
+  const physical = await pool.connect();
+  let connectionFailure: Error | undefined;
+  const failed = (error: Error) => { connectionFailure ??= error; };
+  physical.on?.("error", failed);
+  const client: QueryExecutor = { async query<R extends QueryResultRow>(sql: string, values?: unknown[]): Promise<QueryResult<R>> {
+    if (connectionFailure) throw connectionFailure;
+    const result = await physical.query<R>(sql,values);
+    if (connectionFailure) throw connectionFailure;
+    return result;
+  } };
   try {
     await client.query("BEGIN");
     const result = await action(client);
@@ -105,6 +114,6 @@ async function withReadinessTransaction<T>(pool: Pool, action: (client: QueryExe
     throw error;
   } finally {
     // No uncertain BEGIN/COMMIT/ROLLBACK state is ever returned to the pool.
-    client.release(true);
+    try { physical.release(true); } finally { physical.off?.("error", failed); }
   }
 }

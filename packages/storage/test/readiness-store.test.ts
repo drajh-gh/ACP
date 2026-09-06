@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import { it } from "node:test";
 import { createStableId } from "@acp/domain";
 import type { Pool } from "pg";
@@ -10,6 +11,34 @@ const query = { projectId: createStableId("project"), profileId: createStableId(
 const terms = { assessmentId: createStableId("capabilityReadinessAssessment"), projectId: query.projectId, profileId: query.profileId,
   profileVersion: query.profileVersion, ...key, recordedState: "unconfigured" as const, recordedReason: "No synthetic runner configured.",
   assessedAt: "2026-09-06T00:00:00.000001Z", validUntil: "2026-09-06T01:00:00.000001Z", evidenceIds: [], supersedesAssessmentId: null };
+
+it("readiness checked-out socket errors stop later queries and retain a listener through physical discard", async () => {
+  for (const phase of ["BEGIN", "COMMIT"]) {
+    const client = new EventEmitter(), seen: string[] = [];
+    let released = false;
+    Object.assign(client, { async query(sql: string) {
+      seen.push(sql); assert.equal(client.listenerCount("error"),1);
+      if (sql === phase) client.emit("error",new Error("synthetic readiness socket failure"));
+      return { rows: sql.startsWith("INSERT") ? [{ assessment: { ...terms,...authority } }] : [] };
+    }, release(discard: unknown) { assert.equal(discard,true); assert.equal(client.listenerCount("error"),1); released=true; } });
+    const pool = { options: { max:4,connectionTimeoutMillis:3000,statement_timeout:5000,lock_timeout:2000 },
+      async connect() { return client; }, async query() { assert.equal(released,true); return { rows:[{ assessment:{ ...terms,...authority } }] }; } } as unknown as Pool;
+    const store = new PostgresReadinessAssessmentStore(pool,authority);
+    if (phase === "BEGIN") await assert.rejects(store.record(terms),/socket failure/u);
+    else assert.equal((await store.record(terms)).replayed,true);
+    assert.equal(released,true); assert.equal(client.listenerCount("error"),0); assert.equal(seen.at(-1),phase);
+  }
+});
+
+it("readiness historical replay survives a lost read-only COMMIT via exact independent readback", async () => {
+  let released = false, readbacks = 0;
+  const original = { ...terms,...authority };
+  const pool = { options: { max:4,connectionTimeoutMillis:3000,statement_timeout:5000,lock_timeout:2000 }, async connect() {
+    return { async query(sql: string) { if(sql === "COMMIT") throw new Error("synthetic lost historical COMMIT");
+      return { rows:sql.startsWith("SELECT") ? [{ assessment:original }] : [] }; }, release(discard: unknown) { assert.equal(discard,true); released=true; } };
+  }, async query() { assert.equal(released,true); readbacks++; return { rows:[{ assessment:original }] }; } } as unknown as Pool;
+  assert.deepEqual(await new PostgresReadinessAssessmentStore(pool,authority).record(terms),{ assessment:original,replayed:true }); assert.equal(readbacks,1);
+});
 
 it("readiness writer pins trusted provenance/evaluator and requires bounded pool settings", async () => {
   let calls = 0;

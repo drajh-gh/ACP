@@ -128,6 +128,10 @@ but does not rerun current admission or extend validity. After an attempted inse
 fails or COMMIT acknowledgement is uncertain, the failed physical session is closed
 before independent exact-ID readback. Only an exact immutable record confirms
 historical replay; missing/failed readback is not success. Conflicting terms reject.
+This includes a lost acknowledgement on the read-only COMMIT of an already
+matched historical replay. The checked-out client has a sticky socket-error guard
+before and after each query; its listener remains installed through physical
+discard. A known failed connection receives no later SQL, including ROLLBACK.
 
 The read path uses one bounded read-only MVCC statement and database clock, selects
 latest before evidence filtering, preserves microseconds as text, proves exact

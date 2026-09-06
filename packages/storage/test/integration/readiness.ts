@@ -163,6 +163,29 @@ try {
     });
   }
   if (phase === "races") {
+    for (const phase of ["insert", "commit"] as const) await check(`real checked-out socket loss after ${phase} is contained and reconciled`, async () => {
+      const row = await terms(); let pid: number | undefined;
+      const intercepted = { options: pool.options, query: pool.query.bind(pool), async connect() {
+        const client = await pool.connect(); pid = (await client.query("SELECT pg_backend_pid() AS pid")).rows[0].pid as number;
+        return { on: client.on.bind(client), off: client.off.bind(client), async query<R extends QueryResultRow>(sql: string, values?: unknown[]): Promise<QueryResult<R>> {
+          const result = await client.query<R>(sql,values);
+          if ((phase === "insert" && sql.startsWith("INSERT")) || (phase === "commit" && sql === "COMMIT")) {
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            const observedError = new Promise<void>((resolve,reject) => {
+              timer = setTimeout(() => reject(new Error("fixture socket error deadline")),1500);
+              client.once("error",() => { clearTimeout(timer); resolve(); });
+            });
+            try { await pool.query("SELECT pg_terminate_backend($1)",[pid]); await observedError; }
+            finally { clearTimeout(timer); }
+          }
+          return result;
+        }, release(discard?: Error | boolean) { client.release(discard); } };
+      } } as unknown as Pool;
+      if (phase === "insert") { await assert.rejects(new PostgresReadinessAssessmentStore(intercepted,authority).record(row)); await absent(row.assessmentId); }
+      else assert.equal((await new PostgresReadinessAssessmentStore(intercepted,authority).record(row)).replayed,true);
+      assert.equal((await pool.query("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid=$1) AS remains",[pid])).rows[0].remains,false);
+      assert.equal((await store.record(row)).replayed,phase === "commit");
+    });
     await check("concurrent same-ID insertion converges to one exact historical record", async () => {
       const row = await terms({ recordedState: "available", evidenceIds: [await evidence()] });
       const results = await Promise.all([store.record(row), store.record(row)]);
@@ -221,8 +244,9 @@ try {
       } finally { client.release(true); }
       const s = await snapshot(row); assert.equal(s.entries[0]?.currentState, "stale"); assert.equal(s.entries[0]?.evidenceIdentityMatches, false);
     });
-    await check("lost real COMMIT acknowledgement closes its backend then confirms only the immutable exact record", async () => {
+    for (const replay of [false,true]) await check(`lost real ${replay ? "historical replay" : "insertion"} COMMIT closes backend then confirms only the exact record`, async () => {
       const row = await terms(), releases: unknown[] = [], pids: number[] = [];
+      if (replay) await store.record(row);
       const intercepted = { options: pool.options, query: pool.query.bind(pool), async connect() {
         const client = await pool.connect(); pids.push((await client.query("SELECT pg_backend_pid() AS pid")).rows[0].pid as number);
         return { async query<R extends QueryResultRow>(sql: string, values?: unknown[]): Promise<QueryResult<R>> {
