@@ -7,6 +7,7 @@ export const idPrefixes = {
   claim: "clm",
   capabilityGrant: "cgr",
   capabilityGrantEvaluation: "cge",
+  capabilityReadinessAssessment: "cra",
   changeSet: "chs",
   completionContract: "cct",
   completionEvaluation: "cev",

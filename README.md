@@ -2,7 +2,7 @@
 
 ACP is an always-on control plane for durable, policy-governed Codex work. The
 repository is being implemented from [specification version 1.0.0](SPECIFICATION.md).
-M0 and M1 are complete. M2 is in progress; the current candidate is not yet a
+M0 and M1 are complete. M2 and independent M3 foundations are in progress; the current candidate is not yet a
 deployed autonomous service.
 
 ## Current slice
@@ -14,6 +14,9 @@ deployed autonomous service.
 - completion-contract evaluation that cannot imply sibling lifecycle state
 - runtime-validated intake, claim, approval, workflow, capability, readiness,
   and reconciliation contracts
+- an additive pure readiness matrix with exact profile/resource identity,
+  microsecond expiry, persistent revocation semantics and metadata-only evidence;
+  no durable readiness writer or MCP readiness tool is enabled yet
 - deterministic effect-transition, approval-drift, cursor, and kill-switch
   guards
 - reversible PostgreSQL migrations, an up/down-checksum-aware runner, and stores for

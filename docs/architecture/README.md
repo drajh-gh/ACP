@@ -28,3 +28,4 @@ explain how its fixed technology choices shape the repository.
 | [0016](0016-recorded-counterpart-status.md) | Bounded recorded counterpart mission status |
 | [0017](0017-inert-provisioner-plans.md) | Inert immutable provisioner attempt plans |
 | [0018](0018-provisioner-target-observation.md) | Standalone native provisioner target observations |
+| [0019](0019-recorded-capability-readiness.md) | Exact recorded capability readiness |

@@ -7,6 +7,7 @@ import "./effects.test.ts";
 import "./workflows.test.ts";
 import "./capabilities.test.ts";
 import "./reconciliation.test.ts";
+import "./readiness.test.ts";
 import "./execution-guards.test.ts";
 import "./runtime-contracts.test.ts";
 import "./node-context.test.ts";
