@@ -3,6 +3,7 @@ export const idPrefixes = {
   approval: "apr",
   approvalEvaluation: "ape",
   artifact: "art",
+  attentionItem: "ati",
   candidate: "can",
   claim: "clm",
   capabilityGrant: "cgr",

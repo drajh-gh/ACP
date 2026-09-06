@@ -1,4 +1,5 @@
 import "./ids.test.ts";
+import "./attention.test.ts";
 import "./json-snapshot.test.ts";
 import "./exact-time.test.ts";
 import "./profile-proposal.test.ts";

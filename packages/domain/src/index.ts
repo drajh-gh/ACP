@@ -1,4 +1,5 @@
 export * from "./claims.ts";
+export * from "./attention.ts";
 export * from "./compatibility.ts";
 export * from "./effects.ts";
 export * from "./ids.ts";

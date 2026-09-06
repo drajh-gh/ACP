@@ -46,3 +46,4 @@ explain how its fixed technology choices shape the repository.
 | [0034](0034-counterpart-mission-creation-sessions.md) | Isolated counterpart creation sessions |
 | [0035](0035-counterpart-mission-response-boundary.md) | Bounded mission responses and uncertain creation |
 | [0036](0036-stopped-provisioner-worktree-observation.md) | Read-only stopped worktree observation |
+| [0037](0037-recorded-attention-queue.md) | Recorded attention, distinct from decisions and notifications |
