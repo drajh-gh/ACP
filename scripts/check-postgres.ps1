@@ -19,7 +19,7 @@ param(
   [string]$ProvisionerPlans,
   [ValidateSet('core', 'races', 'expiry', 'upgrade', 'regression')]
   [string]$ProvisionerJournal,
-  [ValidateSet('core', 'races', 'expiry', 'sessions', 'upgrade', 'regression')]
+  [ValidateSet('core', 'races', 'expiry', 'sessions', 'upgrade', 'regression', 'controller')]
   [string]$ProvisionerAdmissions,
   [ValidateSet('core', 'races', 'upgrade', 'conflict', 'legacy', 'regression')]
   [string]$NativeRootClaims,
@@ -401,7 +401,9 @@ try {
         Invoke-AcpSqlFile ('packages/storage/migrations/' + $migration) ('Provisioner admission prerequisite: ' + $migration)
       }
       if ($ProvisionerAdmissions -ne 'upgrade') { Invoke-AcpSqlFile 'packages/storage/migrations/0021_provisioner_admissions.sql' '0021 fresh-only provisioner admissions' }
-      if ($ProvisionerAdmissions -eq 'regression') {
+      if ($ProvisionerAdmissions -eq 'controller') {
+        Invoke-AcpNodeCheck 'apps/worker/test/integration/provisioner-controller.ts' 'Database-bound synthetic provisioner controller integration' -TimeoutSeconds 30
+      } elseif ($ProvisionerAdmissions -eq 'regression') {
         Invoke-AcpNodeCheck 'packages/storage/test/integration/provisioner-journal.ts' 'Provisioner journal regression under0021' 'core' -TimeoutSeconds 30
         Invoke-AcpNodeCheck 'packages/storage/test/integration/native-root-claims.ts' 'Shared native root claims regression under0021' 'core' -TimeoutSeconds 30
       } else {

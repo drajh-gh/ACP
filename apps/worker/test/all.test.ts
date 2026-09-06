@@ -13,6 +13,7 @@ import "./windows-provisioner-observer.test.ts";
 import "./windows-leased-worktree-observer.test.ts";
 import "./filesystem-writer-guard.test.ts";
 import "./native-filesystem-writer-controller.test.ts";
+import "./native-provisioner-controller.test.ts";
 import "./windows-filesystem-lease-channel.test.ts";
 import "./npm-package-manifest-discovery.test.ts";
 import "./npm-manifest-discovery-coordinator.test.ts";
