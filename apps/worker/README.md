@@ -351,6 +351,31 @@ technical operation/resource enforcement from these observations.
 
 ## Verification
 
+### Private raw native provisioner bridge
+
+The dedicated bridge integrates original-plan/owner ACK validation with the
+separate permanent WPA fence and ADR0027's one-shot native job. It flushes
+consumption/root identity before READY, holds the exact fence through GO, and
+seals descendant-empty stop evidence with the actual root exit code. Its
+`closed` frame is provisional: a future TS session must also await bridge/pipe
+closure and propagate `failed` separately. No database-backed adapter, production
+Git operation or restricted filesystem grant is enabled. See
+[ADR0028](../../docs/architecture/0028-native-provisioner-bridge.md).
+
+Run these exact phases separately and sequentially under the existing 70/90-second
+owned-job limits. Synthetic plans and ACKs are not database authority:
+
+```powershell
+pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite provisioner-bridge -TestNamePattern '^provisioner bridge core:'
+pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite provisioner-bridge -TestNamePattern '^provisioner bridge ack-owner:'
+pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite provisioner-bridge -TestNamePattern '^provisioner bridge ack-plan:'
+pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite provisioner-bridge -TestNamePattern '^provisioner bridge ack-root:'
+pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite provisioner-bridge -TestNamePattern '^provisioner bridge ack-fence:'
+pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite provisioner-bridge -TestNamePattern '^provisioner bridge framing:'
+pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite provisioner-bridge -TestNamePattern '^provisioner bridge safety:'
+pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite provisioner-bridge -TestNamePattern '^provisioner bridge loss:'
+```
+
 ### Native provisioner admission primitive
 
 The disjoint one-shot mode in `WindowsWorkerJob` keeps provisioners suspended
