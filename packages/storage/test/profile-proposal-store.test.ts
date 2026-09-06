@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { it } from "node:test";
-import { buildProjectProfileProposal, canonicalJsonDigest, createStableId, profileFieldIds } from "@acp/domain";
+import { buildProjectProfileProposal, canonicalJsonDigest, createStableId, profileFieldIds, reduceProfileDiscoveryObservations } from "@acp/domain";
 import type { Pool } from "pg";
 import { getProjectProfileProposal, getProfileConfirmationRequest, PostgresProfileProposalStore } from "../src/profile-proposal-store.ts";
 import { parseExactProfileJson } from "../src/profile-proposal-json.ts";
@@ -14,6 +14,28 @@ const { fields: _fields, ...identity } = terms;
 const proposal = buildProjectProfileProposal({ ...identity, producer, proposedAt: "2026-09-06T00:00:00Z" }, {}, []);
 const bodyOf = (value: typeof proposal) => { const { proposalDigest: _digest, ...body } = value; return JSON.stringify(body); };
 const query = { projectId: terms.projectId, proposalId: terms.proposalId };
+
+it("private discovery rejects malformed observations and caller-owned fields before any database I/O", async () => {
+  let calls = 0;
+  const pool = { options, async connect() { calls++; throw new Error("unexpected discovery I/O"); } } as unknown as Pool;
+  const store = new PostgresProfileProposalStore(pool, producer);
+  for (const extra of ["producer", "proposedAt", "fields", "evidencePins", "authority", "confirmedAt"]) {
+    await assert.rejects(store.recordDiscovery({ ...identity, observations: [], [extra]: "injected" }));
+  }
+  await assert.rejects(store.recordDiscovery({ ...identity, observations: [{ fieldId: "context.product", value: "unattributed", evidenceIds: [] }] }));
+  assert.equal(calls, 0);
+});
+it("private discovery delegates normalized history to the same exact replay and physical-discard protocol", async () => {
+  const discovered = buildProjectProfileProposal({ ...identity, producer, proposedAt: proposal.proposedAt }, reduceProfileDiscoveryObservations([]), []);
+  const seen: string[] = [], releases: unknown[] = [];
+  const pool = { options, async connect() { return { async query(sql: string) {
+    seen.push(sql); return { rows: sql.startsWith("SELECT") ? [{ body: bodyOf(discovered) }] : [] };
+  }, release(discard: unknown) { releases.push(discard); } }; } } as unknown as Pool;
+  const store = new PostgresProfileProposalStore(pool, producer);
+  assert.deepEqual(await store.recordDiscovery({ ...identity, observations: [] }), { proposal: discovered, replayed: true });
+  assert.deepEqual(await store.record({ ...identity, fields: discovered.fields }), { proposal: discovered, replayed: true });
+  assert.ok(!seen.some(sql => /INSERT|UPDATE|DELETE/u.test(sql))); assert.deepEqual(releases, [true, true]);
+});
 
 it("profile writer observes checked-out socket errors and removes the listener only after discard", async () => {
   for (const phase of ["BEGIN", "COMMIT"]) {

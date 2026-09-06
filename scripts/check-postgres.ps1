@@ -18,7 +18,7 @@ param(
   [string]$ProvisionerPlans,
   [ValidateSet('core', 'races', 'expiry', 'limits', 'snapshot', 'upgrade', 'regression', 'http')]
   [string]$Readiness,
-  [ValidateSet('core', 'races', 'references', 'snapshot', 'upgrade', 'regression', 'http')]
+  [ValidateSet('core', 'races', 'references', 'snapshot', 'upgrade', 'regression', 'http', 'discovery')]
   [string]$ProfileProposals,
   [switch]$MigrationSessions,
   [Parameter(DontShow)]

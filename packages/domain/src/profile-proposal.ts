@@ -41,6 +41,12 @@ export interface ProfileFactAlternative {
   readonly value: JsonValue;
   readonly evidenceIds: readonly StableId<"evidence">[];
 }
+/** An attributed source report, not verified truth, source precedence or user confirmation. */
+export interface ProfileDiscoveryObservation extends ProfileFactAlternative {
+  readonly fieldId: ProfileFieldId;
+}
+export const profileDiscoveryMaximumObservations = 310;
+export const profileDiscoveryMaximumBytes = 1_048_576;
 export interface ProfileEvidencePin {
   readonly evidenceId: StableId<"evidence">;
   readonly projectId: StableId<"project">;
@@ -195,6 +201,41 @@ export function prepareProfileProposalFields(value: unknown) {
   const ids = [...new Set(Object.values(fields).flatMap(field => fieldEvidenceIds(field)))].sort();
   if (ids.length > 1240) throw new Error(invalidProposal);
   return { fields, evidenceIds: ids };
+}
+
+/** Deterministic reduction of already-selected, already-redacted observations. No I/O or authority evaluation. */
+export function reduceProfileDiscoveryObservations(value: unknown): Readonly<Record<ProfileFieldId, ProfileProposalField>> {
+  try {
+    const observations = boundedArray(value, profileDiscoveryMaximumObservations);
+    assertSize(observations, profileDiscoveryMaximumBytes);
+    const grouped = new Map<ProfileFieldId, Map<string, { value: JsonValue; evidenceIds: Set<StableId<"evidence">> }>>();
+    for (const value of observations) {
+      const input = expectRecord(value, "attributed profile observation");
+      expectOnlyKeys(input, ["fieldId", "value", "evidenceIds"], "attributed profile observation");
+      const id = expectEnum(input.fieldId, profileFieldIds, "profile observation field");
+      const fact = parseField(id, { status: "observed", value: input.value, evidenceIds: input.evidenceIds });
+      if (fact.status !== "observed") throw new Error(invalidProposal);
+      const alternatives = grouped.get(id) ?? new Map<string, { value: JsonValue; evidenceIds: Set<StableId<"evidence">> }>();
+      const key = digest(fact.value), previous = alternatives.get(key);
+      const merged = new Set([...(previous?.evidenceIds ?? []), ...fact.evidenceIds]);
+      if (merged.size > 20) throw new Error(invalidProposal);
+      alternatives.set(key, { value: fact.value, evidenceIds: merged });
+      if (alternatives.size > 5) throw new Error(invalidProposal);
+      grouped.set(id, alternatives);
+    }
+    const fields = Object.fromEntries(profileFieldIds.map(id => {
+      const alternatives = grouped.get(id);
+      if (!alternatives) return [id, { status: "missing", reason: "No attributed observation was supplied for this field.", question: `What is the intended value for ${id}?` }];
+      const values = [...alternatives.keys()].sort().map(key => {
+        const fact = alternatives.get(key)!;
+        return { value: fact.value, evidenceIds: [...fact.evidenceIds].sort() };
+      });
+      return [id, values.length === 1 ? { status: "observed", ...values[0]! }
+        : { status: "conflicted", question: `Which attributed value is intended for ${id}?`, alternatives: values }];
+    }));
+    // Apply the same cross-field credentials, tracker semantics and complete-document bounds as direct proposals.
+    return prepareProfileProposalFields(fields).fields;
+  } catch { throw new Error("Invalid profile discovery observations; no partial fields returned."); }
 }
 
 export function parseProfileProposalProducer(value: unknown): ProfileProposalProducer {

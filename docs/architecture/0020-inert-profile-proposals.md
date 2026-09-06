@@ -22,6 +22,42 @@ deployment authority or secret availability.
 
 ## Complete checklist, not a compiled profile
 
+### Attributed discovery reduction
+
+`reduceProfileDiscoveryObservations` accepts only already-selected, redacted
+`{ fieldId, value, evidenceIds }` source reports. An exact field and at least one
+evidence ID attribute each value; this is not proof of source authority, freshness,
+coverage or truth. The reducer performs no I/O or instruction execution.
+
+It returns every checklist field in catalog order. Absence means no attributed
+observation was supplied, with a fixed unanswered question; it never invents an
+empty collection or non-applicability. An explicit empty collection with evidence
+remains an observed value. Equal canonical JSON values merge their sorted unique
+evidence IDs. Two to five distinct values remain unresolved alternatives, ordered
+by canonical value digest. Caller order, repeated observations and object-key
+spelling order cannot select a winner. Array order and value case remain semantic.
+No source ranking or “most recent wins” rule is inferred.
+
+Input is capped at 310 dense observations and 1,048,576 UTF-8 JSON bytes. Individual
+facts retain the existing depth/node/value/byte limits. More than five alternatives
+or 20 merged evidence IDs for one value rejects the whole reduction, never truncates.
+The completed field map then passes the same credential/tracker semantics, total
+field bytes and 1,240 distinct-evidence ceiling as direct proposal assembly.
+Only `observed`, `missing` and `conflicted` are produced; explicit proposed values
+and proposed non-applicability remain separate correction inputs.
+
+The private store's `recordDiscovery` validates exact candidate/predecessor scope,
+reduces before I/O and delegates to the existing `record` protocol. Replay identity
+is the normalized complete field map plus configured producer and exact candidate
+metadata, not a raw observation sequence. Reordering/repeating equivalent reports
+does not create another fact or observation-run audit record. Changed reduced
+content or evidence requires a new exact successor. Existing evidence fingerprints,
+private transaction disposal, uncertain-commit recovery and public disclosure
+checks remain authoritative. No new table, migration, public writer or provider
+inventory is introduced, and this is not the complete §13.1 onboarding flow.
+
+### Field states
+
 The schema `1.0.0` checklist has exactly 62 independently answerable fields in
 the 15 specification areas. Field IDs are case-sensitive dotted identifiers.
 

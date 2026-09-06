@@ -1,7 +1,7 @@
 import {
   buildProfileConfirmationRequest, canonicalJsonDigest, expectJsonValue, expectOnlyKeys, expectRecord,
   parseProfileProposalIdentity, parseProfileProposalProducer, parseProjectProfileProposal, parseProjectProfileProposalQuery,
-  prepareProfileProposalFields, profileProposalMaximumBytes,
+  prepareProfileProposalFields, profileProposalMaximumBytes, reduceProfileDiscoveryObservations,
   type ProfileProposalIdentity, type ProfileProposalProducer, type ProjectProfileProposal, type ProjectProfileProposalQuery, type ProfileConfirmationRequest,
 } from "@acp/domain";
 import type { Pool, QueryResult, QueryResultRow } from "pg";
@@ -10,6 +10,7 @@ import { projectProfileProposalSql } from "./profile-proposal-query.ts";
 import { parseExactProfileJson } from "./profile-proposal-json.ts";
 
 export interface ProfileProposalWrite extends ProfileProposalIdentity { readonly fields: unknown }
+export interface ProfileDiscoveryWrite extends ProfileProposalIdentity { readonly observations: unknown }
 /** Recorded proposal and review-request reads only. No producer, confirmation, publication or activation methods. */
 export interface ProjectProfileProposalPersistence {
   getProjectProfileProposal(query: ProjectProfileProposalQuery): Promise<ProjectProfileProposal | undefined>;
@@ -29,6 +30,15 @@ export class PostgresProfileProposalStore {
       if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > maximum) throw new TypeError(`profile proposal pool ${key} must be explicitly bounded from 1 to ${maximum}`);
     }
     this.producer = Object.freeze(parseProfileProposalProducer(producer)); this.pool = pool;
+  }
+
+  /** Private reduction only; source selection/redaction precedes this call. No provider discovery or public writer. */
+  async recordDiscovery(value: ProfileDiscoveryWrite): Promise<{ readonly proposal: ProjectProfileProposal; readonly replayed: boolean }> {
+    const supplied = expectRecord(value, "profile discovery write");
+    expectOnlyKeys(supplied, ["proposalId", "projectId", "candidateProfile", "baseProfile", "supersedesProposalId", "observations"], "profile discovery write");
+    const { observations, ...identity } = supplied;
+    const input = parseProfileProposalIdentity(identity), fields = reduceProfileDiscoveryObservations(observations);
+    return this.record({ ...input, fields });
   }
 
   async record(value: ProfileProposalWrite): Promise<{ readonly proposal: ProjectProfileProposal; readonly replayed: boolean }> {

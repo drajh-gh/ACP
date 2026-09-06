@@ -6,7 +6,7 @@ import { getProjectProfileProposal, getProfileConfirmationRequest, PostgresProfi
 import { projectProfileProposalSql } from "../../src/profile-proposal-query.ts";
 
 const port = Number(process.argv[2]), phase = process.argv[3];
-if (!Number.isInteger(port) || port < 1024 || port > 65535 || !["core", "races", "references", "snapshot", "upgrade"].includes(phase ?? "")) throw new Error("owned database port and exact profile proposal phase required");
+if (!Number.isInteger(port) || port < 1024 || port > 65535 || !["core", "races", "references", "snapshot", "upgrade", "discovery"].includes(phase ?? "")) throw new Error("owned database port and exact profile proposal phase required");
 const pool = new Pool({ connectionString: `postgresql://postgres:acp_test_password@127.0.0.1:${port}/acp_test`, max: 4,
   connectionTimeoutMillis: 3000, statement_timeout: 5000, lock_timeout: 3000, application_name: "acp-profile-proposal-fixture" });
 const legacy = (prefix: string) => `${prefix}_00000000-0000-4000-8000-000000000001`;
@@ -62,6 +62,68 @@ async function migration(direction: "up" | "down") {
 }
 
 try {
+  if (phase === "discovery") {
+    await check("empty attributed discovery persists every unanswered field without inventing completeness", async () => {
+      const { fields: _selected, ...identity } = terms(), before = await counts();
+      const saved = await store.recordDiscovery({ ...identity, observations: [] });
+      assert.equal(saved.replayed, false); assert.equal(saved.proposal.state, "needs_input");
+      assert.equal(Object.keys(saved.proposal.fields).length, 62);
+      for (const field of Object.values(saved.proposal.fields)) assert.equal(field.status, "missing");
+      const after = await counts(); assert.equal(after.proposals, before.proposals + 1);
+      for (const key of ["profiles", "grants", "runs", "effects", "missions", "pins"]) assert.equal(after[key], before[key]);
+    });
+    const firstEvidence = await evidence(), secondEvidence = await evidence();
+    const { fields: _selected, ...identity } = terms();
+    const observations = [
+      { fieldId: "context.product", value: { name: "Synthetic", scale: 0.1 }, evidenceIds: [firstEvidence] },
+      { fieldId: "context.product", value: { scale: 0.1, name: "Synthetic" }, evidenceIds: [secondEvidence] },
+      { fieldId: "repositories.defaultBranches", value: "Main", evidenceIds: [firstEvidence] },
+      { fieldId: "repositories.defaultBranches", value: "main", evidenceIds: [secondEvidence] },
+    ];
+    const saved = await store.recordDiscovery({ ...identity, observations });
+    const selectedQuery = { projectId, proposalId: identity.proposalId };
+    await check("attributed discovery retains merged evidence, conflicts, gaps and server-derived fingerprints", async () => {
+      assert.equal(saved.proposal.state, "conflicted");
+      assert.deepEqual(saved.proposal.fields["context.product"], { status: "observed", value: { name: "Synthetic", scale: 0.1 }, evidenceIds: [firstEvidence, secondEvidence].sort() });
+      const conflict = saved.proposal.fields["repositories.defaultBranches"]; assert.equal(conflict.status, "conflicted");
+      if (conflict.status === "conflicted") assert.deepEqual(conflict.alternatives.map(item => item.value).sort(), ["Main", "main"]);
+      assert.equal(saved.proposal.fields["repositories.protections"].status, "missing");
+      assert.deepEqual(await getProjectProfileProposal(pool, selectedQuery), saved.proposal);
+      for (const pin of saved.proposal.evidencePins) assert.equal(pin.identityDigest, (await pool.query("SELECT acp.readiness_evidence_fingerprint(e) AS digest FROM acp.evidence_records e WHERE evidence_id=$1", [pin.evidenceId])).rows[0].digest);
+      await assert.rejects(getProfileConfirmationRequest(pool, selectedQuery), /unavailable/u);
+    });
+    await check("reordered and repeated observations replay the exact reduction while changed content or evidence rejects", async () => {
+      const before = await counts();
+      assert.deepEqual(await store.recordDiscovery({ ...identity, observations: [...observations.slice().reverse(), observations[0]] }), { proposal: saved.proposal, replayed: true });
+      assert.deepEqual(await store.record({ ...identity, fields: saved.proposal.fields }), { proposal: saved.proposal, replayed: true });
+      await assert.rejects(store.recordDiscovery({ ...identity, observations: observations.slice(1) }), /different terms/u);
+      await assert.rejects(store.recordDiscovery({ ...identity, observations: [{ ...observations[0], value: "Changed" }, ...observations.slice(1)] }), /different terms/u);
+      assert.deepEqual(await counts(), before);
+    });
+    await check("a corrected successor does not rewrite conflicts or fill unrelated gaps", async () => {
+      const successor = { ...identity, proposalId: createStableId("projectProfileProposal"), supersedesProposalId: identity.proposalId };
+      const next = await store.recordDiscovery({ ...successor, observations: observations.slice(0, 3) });
+      assert.equal(next.proposal.state, "needs_input"); assert.equal(next.proposal.fields["repositories.defaultBranches"].status, "observed");
+      assert.equal(next.proposal.fields["repositories.protections"].status, "missing");
+      assert.deepEqual(await getProjectProfileProposal(pool, selectedQuery), saved.proposal);
+      await assert.rejects(store.recordDiscovery({ ...identity, proposalId: createStableId("projectProfileProposal"), supersedesProposalId: identity.proposalId, observations }), /exact latest/u);
+    });
+    await check("restricted or missing evidence rejects fresh discovery without retaining a partial proposal", async () => {
+      const restricted = await evidence({ sensitivity: "restricted" }), before = await counts();
+      for (const evidenceId of [restricted, createStableId("evidence")]) {
+        const { fields: _ignored, ...fresh } = terms();
+        await assert.rejects(store.recordDiscovery({ ...fresh, observations: [{ fieldId: "context.product", value: "Synthetic", evidenceIds: [evidenceId] }] }));
+        await absent(fresh.proposalId);
+      }
+      assert.deepEqual(await counts(), before);
+    });
+    await check("private replay after evidence restriction preserves history but never bypasses public disclosure", async () => {
+      await pool.query("UPDATE acp.evidence_records SET sensitivity='restricted' WHERE evidence_id=$1", [firstEvidence]);
+      assert.deepEqual(await store.recordDiscovery({ ...identity, observations }), { proposal: saved.proposal, replayed: true });
+      await assert.rejects(getProjectProfileProposal(pool, selectedQuery), /unavailable/u);
+      await assert.rejects(getProfileConfirmationRequest(pool, selectedQuery), /unavailable/u);
+    });
+  }
   if (phase === "core") {
     await check("SQL and domain checklist catalogs agree exactly", async () => {
       assert.deepEqual((await pool.query("SELECT acp.profile_proposal_field_ids() AS ids")).rows[0].ids, profileFieldIds);
