@@ -170,7 +170,9 @@ public sealed class WindowsLaunchFence : IDisposable
             // A leaf handle alone does not anchor a replaceable parent namespace.
             foreach (string path in paths)
             {
-                var handle = CreateFile(path, 0, 3, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
+                // FILE_LIST_DIRECTORY participates in sharing; zero-access
+                // metadata handles do not prevent an empty directory rename.
+                var handle = CreateFile(path, 1, 3, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
                 if (handle.IsInvalid) { handle.Dispose(); Fail("open launch directory"); }
                 lease.Handles.Add(handle);
                 if (!GetFileInformationByHandle(handle, out FileInformation info)) Fail("inspect launch directory");

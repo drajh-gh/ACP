@@ -13,7 +13,7 @@ if (-not $Internal) {
   $fixtureRoot = $null
   $empty = $false
   try {
-    if ($Suite -in @('filesystem-pins', 'provisioner-observation')) {
+    if ($Suite -in @('filesystem-pins', 'provisioner-observation', 'launch-fence')) {
       $OwnedFixtureRun = [guid]::NewGuid().ToString('D')
       $pendingRoot = Get-AcpNativeChannelRoot $OwnedFixtureRun
       New-Item -ItemType Directory -Path $pendingRoot | Out-Null
@@ -52,7 +52,7 @@ $testInfo.CreateNoWindow = $true
 $testInfo.RedirectStandardOutput = $true
 $testInfo.RedirectStandardError = $true
 if ($Suite -in @('filesystem', 'filesystem-pins', 'provisioner-observation')) { $testInfo.Environment['ACP_TEST_GIT'] = (Get-Command git -CommandType Application | Select-Object -First 1).Source }
-if ($Suite -in @('filesystem-pins', 'provisioner-observation')) { $testInfo.Environment['ACP_TEST_NATIVE_CHANNEL_ROOT'] = Get-AcpNativeChannelRoot $OwnedFixtureRun }
+if ($Suite -in @('filesystem-pins', 'provisioner-observation', 'launch-fence')) { $testInfo.Environment['ACP_TEST_NATIVE_CHANNEL_ROOT'] = Get-AcpNativeChannelRoot $OwnedFixtureRun }
 $testFile = switch ($Suite) {
   'launch-fence' { 'apps/worker/test/integration/windows-launch-fence.test.ts' }
   'filesystem' { 'apps/worker/test/integration/windows-filesystem.test.ts' }

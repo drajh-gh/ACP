@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
 import { it } from "node:test";
-import { mkdtemp, rm, readdir, readFile, writeFile, appendFile, mkdir, rename, link, symlink, open } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, resolve, relative, isAbsolute } from "node:path";
+import { mkdtemp, readdir, readFile, writeFile, appendFile, mkdir, rename, link, symlink, open, stat } from "node:fs/promises";
+import { join, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
@@ -14,7 +13,8 @@ import { WorkerTerminationUnconfirmedError } from "../../src/worker-manager.ts";
 
 const native = process.platform === "win32";
 const runnerPath = fileURLToPath(new URL("./synthetic-owned-runner.ts", import.meta.url));
-const report = (pid: number, purpose: string) => process.stdout.write(`Owned PID ${pid}: ${purpose}\n`);
+const pids=new Set<number>();
+const report = (pid: number, purpose: string) => { pids.add(pid); process.stdout.write(`Owned PID ${pid}: ${purpose}\n`); };
 const options = { onSpawn: report };
 const launcher = new WindowsWorkerLauncher({ runnerPath, onSpawn: ({ processId, purpose }) => report(processId, purpose) });
 const signal = () => new AbortController().signal;
@@ -22,13 +22,22 @@ const request = (fence: WindowsLaunchFenceDescriptor) => ({ workerProcessId: cre
   deadlineAt: new Date(Date.now() + 30000).toISOString(), workspace: process.cwd(), maximumOutputBytes: 4096, signal: signal(), launchFence: fence });
 
 async function fixture() {
-  const root = await mkdtemp(join(tmpdir(), "acp-launch-fence-test-"));
+  const owner=process.env.ACP_TEST_NATIVE_CHANNEL_ROOT;
+  assert.ok(owner && isAbsolute(owner),"native gate must own the fixture root");
+  const root = await mkdtemp(join(owner, "case-"));
   const directory = join(root, "seals ž 🚀"); await mkdir(directory);
   const dispose = async () => {
-    const location = resolve(root), local = relative(resolve(tmpdir()), location);
-    assert.ok(local.startsWith("acp-launch-fence-test-") && !local.includes("..") && !isAbsolute(local));
-    // Only exact owned fixture state, after every launcher/helper has exited.
-    await rm(location, { recursive: true, force: true });
+    const until=Date.now()+8000;
+    while(pids.size && Date.now()<until) {
+      for(const pid of pids) {
+        try { process.kill(pid,0); }
+        catch(error) { if((error as NodeJS.ErrnoException).code==="ESRCH") pids.delete(pid); else throw error; }
+      }
+      if(pids.size) await new Promise((done)=>setTimeout(done,20));
+    }
+    assert.equal(pids.size,0,"every reported launch/helper process must exit before case completion");
+    // Outer gate confirms its whole job empty before exact UUID-root removal,
+    // including hard test timeouts. Cases never select recursive cleanup paths.
   };
   try { return { root, directory, fence: await describeWindowsLaunchFence(directory, signal(), options), dispose }; }
   catch (error) { await dispose(); throw error; }
@@ -210,4 +219,43 @@ it("recreated or redirected seal directories and hard-linked files fail closed",
     await link(source, join(f.directory, other.workerProcessId + ".launch"));
     await assert.rejects(launcher.launch(other)); assert.equal((await readFile(source)).length, 0);
   } finally { await f.dispose(); }
+});
+
+it("pure launch-directory anchors deny rename before a fence file exists and release without reserving children",{ skip:!native,timeout:25000 },async()=>{
+  const f=await fixture(),ancestor=join(f.root,"empty-ancestor"),directory=join(ancestor,"empty-fence");
+  let holder:Awaited<ReturnType<typeof probe>>|undefined;
+  try {
+    await mkdir(directory,{ recursive:true });
+    const descriptor=await describeWindowsLaunchFence(directory,signal(),options);
+    holder=await probe("hold-directory-only",request(descriptor));
+    assert.deepEqual(await readdir(directory),[]);
+    for(const source of [directory,ancestor]) {
+      await assert.rejects(rename(source,source+"-moved"),/EPERM|EBUSY|EACCES/u);
+      assert.equal((await stat(source)).isDirectory(),true); await assert.rejects(stat(source+"-moved"),{ code:"ENOENT" });
+    }
+    await mkdir(join(directory,"child-creation-is-not-reserved"));
+    assert.equal((await stat(join(directory,"child-creation-is-not-reserved"))).isDirectory(),true);
+    await holder.dispose(); await gone(holder.child.pid!); holder=undefined;
+    await rename(directory,directory+"-released"); await rename(directory+"-released",directory);
+    await rename(ancestor,ancestor+"-released"); await rename(ancestor+"-released",ancestor);
+  } finally { await holder?.dispose(); await f.dispose(); }
+});
+
+it("held permanent launch fences keep their directory and ancestor spelling until closure",{ skip:!native,timeout:25000 },async()=>{
+  const f=await fixture(),ancestor=join(f.root,"held-ancestor"),directory=join(ancestor,"held-fence");
+  let holder:Awaited<ReturnType<typeof probe>>|undefined;
+  try {
+    await mkdir(directory,{ recursive:true });
+    const descriptor=await describeWindowsLaunchFence(directory,signal(),options),launch=request(descriptor);
+    holder=await probe("hold-fence",launch);
+    for(const source of [directory,ancestor]) {
+      await assert.rejects(rename(source,source+"-moved"),/EPERM|EBUSY|EACCES/u);
+      assert.equal((await stat(source)).isDirectory(),true); await assert.rejects(stat(source+"-moved"),{ code:"ENOENT" });
+    }
+    await holder.dispose(); await gone(holder.child.pid!); holder=undefined;
+    assert.match(await readFile(join(directory,launch.workerProcessId+".launch"),"utf8"),/\nclaimed\n$/u);
+    assert.deepEqual(await sealWindowsWorkerLaunch(descriptor,launch.workerProcessId,signal(),options),{ state:"lost",sealed:true,reason:"sealed_launch_job_absent" });
+    await assert.rejects(launcher.launch(launch));
+    await rename(directory,directory+"-released"); await rename(directory+"-released",directory);
+  } finally { await holder?.dispose(); await f.dispose(); }
 });
