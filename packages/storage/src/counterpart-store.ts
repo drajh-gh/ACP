@@ -4,12 +4,14 @@ import {
   parseStableId,
   type MissionState,
   type StableId,
+  type ProjectReadinessQuery,
 } from "@acp/domain";
 import type { QueryResultRow } from "pg";
 
 import type { ConnectionPool, QueryExecutor } from "./database.ts";
 import { withTransaction } from "./database.ts";
 import { counterpartMissionStatusSql } from "./counterpart-status-query.ts";
+import { getProjectReadiness as readProjectReadiness, type ProjectReadinessPersistence } from "./readiness-store.ts";
 import { counterpartStatusCollectionLimit,counterpartStatusEnvironmentLimit,counterpartStatusMaximumBytes,
   parseCounterpartMissionStatus,type CounterpartMissionStatus } from "./counterpart-status.ts";
 
@@ -51,7 +53,7 @@ export interface CounterpartMissionCreation {
 export interface CounterpartMissionSummary
   extends Omit<CounterpartMissionProjection, "nodes"> {}
 
-export interface CounterpartMissionPersistence {
+export interface CounterpartMissionPersistence extends ProjectReadinessPersistence {
   createMission(input: CounterpartMissionCreate): Promise<CounterpartMissionCreation>;
   getMission(
     missionId: StableId<"mission">,
@@ -328,6 +330,10 @@ export class PostgresCounterpartMissionStore
     const status=parseCounterpartMissionStatus(row.snapshot);
     if(status.missionId!==parsed) throw new Error("mission status identity mismatch");
     return status;
+  }
+
+  async getProjectReadiness(query: ProjectReadinessQuery) {
+    return readProjectReadiness(this.pool, query);
   }
 }
 

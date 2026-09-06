@@ -10,6 +10,8 @@ import type {
   CounterpartMissionSummary,
 } from "@acp/storage";
 import { z } from "zod";
+import { registerReadinessTool } from "./readiness-tool.ts";
+import { controlApiVersion } from "./config.ts";
 
 const stableId = (prefix: string) =>
   z.string().regex(new RegExp(`^${prefix}_[0-9a-f-]+$`, "u"));
@@ -68,7 +70,7 @@ export function createCounterpartMcpServer(
   persistence: CounterpartMissionPersistence,
 ): McpServer {
   const server = new McpServer(
-    { name: "acp-control", version: "0.1.0" },
+    { name: "acp-control", version: controlApiVersion },
     {
       instructions:
         "Create ACP missions only from an explicit user objective and completion scope. Treat returned IDs as authoritative. Inspect mission status before describing progress; never infer deployment, acceptance, tracker, effect, or business completion from mission state.",
@@ -173,6 +175,7 @@ export function createCounterpartMcpServer(
     },
   );
 
+  registerReadinessTool(server, persistence);
   return server;
 }
 

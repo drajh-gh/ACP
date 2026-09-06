@@ -16,7 +16,7 @@ param(
   [string]$CounterpartStatus,
   [ValidateSet('core', 'races', 'expiry', 'upgrade', 'regression')]
   [string]$ProvisionerPlans,
-  [ValidateSet('core', 'races', 'expiry', 'limits', 'snapshot', 'upgrade', 'regression')]
+  [ValidateSet('core', 'races', 'expiry', 'limits', 'snapshot', 'upgrade', 'regression', 'http')]
   [string]$Readiness,
   [switch]$MigrationSessions,
   [Parameter(DontShow)]
@@ -372,6 +372,8 @@ try {
       if ($Readiness -eq 'regression') {
         Invoke-AcpNodeCheck 'packages/storage/test/integration/counterpart-status.ts' 'Recorded counterpart regression under 0017' 'core' -TimeoutSeconds 30
         Invoke-AcpNodeCheck 'packages/storage/test/integration/worktree-provisioner.ts' 'Inert provisioner regression under 0017' 'core' -TimeoutSeconds 30
+      } elseif ($Readiness -eq 'http') {
+        Invoke-AcpNodeCheck 'apps/control-api/test/integration/readiness.ts' 'Read-only readiness PostgreSQL and HTTP integration' -TimeoutSeconds 30
       } else {
         Invoke-AcpNodeCheck 'packages/storage/test/integration/readiness.ts' 'Recorded readiness integration' $Readiness -TimeoutSeconds 30
       }

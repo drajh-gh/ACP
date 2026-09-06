@@ -16,7 +16,8 @@ deployed autonomous service.
   and reconciliation contracts
 - an additive recorded readiness matrix with exact profile/resource identity,
   microsecond expiry, persistent revocation semantics, immutable assessment/evidence
-  pins and bounded single-snapshot reads; no MCP readiness tool is enabled yet
+  pins and bounded single-snapshot reads exposed through authenticated read-only
+  `get_project_readiness`; no live probes or readiness writer are exposed
 - deterministic effect-transition, approval-drift, cursor, and kill-switch
   guards
 - reversible PostgreSQL migrations, an up/down-checksum-aware runner, and stores for
@@ -129,6 +130,7 @@ pwsh -NoProfile -File scripts/check-postgres.ps1 -Readiness limits
 pwsh -NoProfile -File scripts/check-postgres.ps1 -Readiness snapshot
 pwsh -NoProfile -File scripts/check-postgres.ps1 -Readiness upgrade
 pwsh -NoProfile -File scripts/check-postgres.ps1 -Readiness regression
+pwsh -NoProfile -File scripts/check-postgres.ps1 -Readiness http
 pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery
 pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery -LaunchNative
 pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery -FilesystemBindings
@@ -236,7 +238,9 @@ The standalone `Readiness` phases apply seeded PostgreSQL through 0017. They che
 immutable assessment/evidence history, exact supersession and uncertain-response
 replay, expiry, bounded disclosure, one-snapshot consistency and retained rollback.
 The regression phase runs the prior counterpart-status and inert-plan core checks
-sequentially under 0017. No live probes, readiness MCP writer or execution authority
+sequentially under 0017. The `http` phase verifies the actual MCP route over loopback
+using a disposable read-only database role, including whole-error disclosure and
+identity drift. No live probes, readiness MCP writer or execution authority
 is enabled. See [the readiness contract](docs/architecture/0019-recorded-capability-readiness.md).
 The two `provisioner-observation` phases run sequentially in disposable native
 Git fixtures, checking actual parent/base/absence, case/prefix conflicts, bounded

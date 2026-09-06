@@ -1,7 +1,6 @@
 # 0019 — Exact recorded capability readiness
 
-Status: Accepted additive M3 domain and storage contract. Authenticated read-only
-MCP exposure remains follow-up work, not yet implemented.
+Status: Accepted additive M3 domain, storage and authenticated read-only MCP contract.
 
 ## Identity and authority
 
@@ -137,6 +136,36 @@ oversized payloads before returning them. It also works in a read-only transacti
 Downgrade is allowed only while both new tables are empty; populated history and
 all predecessor tables remain retained.
 
-A future read-only MCP tool may consume this projection; it must not activate a
-profile, assess itself, provision credentials, broaden policy or alter worker/effect
-admission. No readiness writer or provider probe is exposed to the counterpart yet.
+## Authenticated counterpart read
+
+`get_project_readiness` consumes this projection through the existing trusted
+global bearer-client boundary. This is operator authentication, not per-project
+user authorization. Exact project/profile/key validation prevents substitution
+and cross-reference leakage but does not establish a user-specific project ACL.
+
+Both the top-level input and nested key objects use strict constructed schemas;
+unknown fields must not be silently stripped by SDK normalization. Before storage
+access, the domain parser validates exact canonical identities, bounds and key
+uniqueness. After storage access, the response parser revalidates the exact query,
+schema `2.0.0`, metadata-only shape and every derived state. Any missing profile,
+invalid/oversized snapshot or persistence exception returns one constant tool
+error with no structured content or partial readiness. Private error text never
+reaches the SDK's error formatter. Successful text makes no aggregate ready claim.
+
+The tool is annotated read-only, nondestructive, idempotent and closed-world. It
+does not activate a profile, assess itself, provision credentials, broaden policy
+or alter worker/effect admission. No readiness writer or provider probe is exposed.
+
+The control surface and source counterpart package advertise `0.2.0`; the
+readiness snapshot schema remains separately versioned at `2.0.0`. Default HTTP
+compatibility admits exact plugin versions `0.1.0` and `0.2.0`. Explicit operator
+allowlists replace, rather than extend, those defaults. An accepted `0.1.0` client
+may discover the additive server tool, although its older packaged allowlist does
+not enable it. Source package changes do not install, cache-refresh or deploy it.
+
+The disposable PostgreSQL/HTTP fixture uses an actual SELECT-only database role
+with read-only transactions, not the internal readiness writer's pool, for the
+MCP route. It proves all seven states, case-distinct unknown keys, exact absent
+profiles, evidence identity drift, restricted/cross-project whole-error masking
+and unchanged assessment/pin/grant/run/effect/mission counts during reads. This
+does not prove live HTTPS deployment, per-project ACLs or whole-profile onboarding.

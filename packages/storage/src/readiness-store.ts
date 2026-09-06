@@ -1,13 +1,17 @@
 import {
   buildProjectReadiness, canonicalJsonDigest, expectJsonValue, expectOnlyKeys, expectRecord, parseProjectReadinessQuery,
   parseReadinessAssessment, parseStableId, readinessMaximumBytes,
-  type ProjectReadiness, type ReadinessAssessment, type StableId,
+  type ProjectReadiness, type ProjectReadinessQuery, type ReadinessAssessment, type StableId,
 } from "@acp/domain";
 import type { Pool } from "pg";
 import type { QueryExecutor } from "./database.ts";
 import { projectReadinessSql } from "./readiness-query.ts";
 
 export type ReadinessAssessmentWrite = Omit<ReadinessAssessment, "provenanceId" | "evaluatorVersion">;
+/** Recorded observations only; implementing this interface does not confer evaluator authority. */
+export interface ProjectReadinessPersistence {
+  getProjectReadiness(query: ProjectReadinessQuery): Promise<ProjectReadiness | undefined>;
+}
 export interface ReadinessEvaluatorIdentity {
   readonly provenanceId: StableId<"provenance">;
   readonly evaluatorVersion: string;

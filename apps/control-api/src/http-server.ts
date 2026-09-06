@@ -6,6 +6,7 @@ import type { CounterpartMissionPersistence } from "@acp/storage";
 
 import { authorizeBearerHeader, validateConfiguredBearerToken } from "./auth.ts";
 import { createCounterpartMcpServer } from "./mcp-server.ts";
+import { controlApiVersion, defaultAllowedPluginVersions } from "./config.ts";
 
 const maximumRequestBytes = 1_048_576;
 
@@ -24,7 +25,7 @@ export function createControlApiServer(options: ControlApiServerOptions): Server
   const allowedHosts = options.allowedHosts?.map((host) => host.toLowerCase());
   const allowedOrigins = new Set(options.allowedOrigins ?? []);
   const allowedPluginVersions = new Set(
-    options.allowedPluginVersions ?? ["0.1.0"],
+    options.allowedPluginVersions ?? defaultAllowedPluginVersions,
   );
   const trustedProxyAddresses = new Set(
     options.trustedProxyAddresses?.map((address) => address.toLowerCase()) ?? [],
@@ -37,7 +38,7 @@ export function createControlApiServer(options: ControlApiServerOptions): Server
           writeJson(response, 405, { error: "method_not_allowed" });
           return;
         }
-        writeJson(response, 200, { status: "ok", version: "0.1.0" });
+        writeJson(response, 200, { status: "ok", version: controlApiVersion });
         return;
       }
       if (request.url !== "/mcp") {

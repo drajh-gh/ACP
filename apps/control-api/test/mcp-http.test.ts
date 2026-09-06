@@ -24,6 +24,7 @@ const bearerToken = "a-high-entropy-test-token-that-is-long-enough";
 const pluginVersion = "0.1.0";
 
 class MemoryCounterpartService implements CounterpartMissionPersistence {
+  async getProjectReadiness() { return undefined; }
   readonly mission = missionFor();
   readonly evidenceId=createStableId("evidence");
   readonly creations: CounterpartMissionCreate[] = [];
@@ -162,7 +163,7 @@ describe("authenticated counterpart MCP", () => {
       const tools = await client.listTools();
       assert.deepEqual(
         tools.tools.map((tool) => tool.name).sort(),
-        ["create_mission", "get_mission_status", "list_active_missions"],
+        ["create_mission", "get_mission_status", "get_project_readiness", "list_active_missions"],
       );
 
       const created = await client.callTool({

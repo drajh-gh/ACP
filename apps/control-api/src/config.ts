@@ -5,6 +5,9 @@ import { validateConfiguredBearerToken } from "./auth.ts";
 /** Keep authenticated control reads/writes bounded; a status snapshot is never
  * an unbounded query or a reason to exhaust the database pool. */
 export const controlApiDatabaseLimits=Object.freeze({ max:4,connectionTimeoutMillis:3000,statement_timeout:5000,lock_timeout:2000 });
+export const defaultAllowedPluginVersions = Object.freeze(["0.1.0", "0.2.0"]);
+/** Advertised control surface version, separate from each returned snapshot schema. */
+export const controlApiVersion = "0.2.0";
 
 export interface ControlApiConfig {
   readonly databaseUrl: string;
@@ -92,7 +95,7 @@ function parseAllowedOrigins(value: string | undefined): readonly string[] {
 
 function parsePluginVersions(value: string | undefined): readonly string[] {
   const versions = value === undefined
-    ? ["0.1.0"]
+    ? defaultAllowedPluginVersions
     : uniqueList(value, "ACP_ALLOWED_PLUGIN_VERSIONS");
   if (versions.some((version) => !/^\d+\.\d+\.\d+$/u.test(version))) {
     throw new TypeError(

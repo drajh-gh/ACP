@@ -1,7 +1,7 @@
 {
   "name": "codex-counterpart",
-  "version": "0.1.0",
-  "description": "Create and inspect durable Agentic Control Plane missions from Codex.",
+  "version": "0.2.0",
+  "description": "Create and inspect durable ACP missions and read independent recorded project readiness from Codex.",
   "author": {
     "name": "ACP"
   },
@@ -9,14 +9,15 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "ACP Counterpart",
-    "shortDescription": "Create and inspect durable ACP missions.",
-    "longDescription": "Turns explicit objectives into durable, policy-governed ACP missions and reports their independent lifecycle projections.",
+    "shortDescription": "Inspect ACP missions and recorded readiness.",
+    "longDescription": "Turns explicit objectives into durable, policy-governed ACP missions, reports independent lifecycle projections, and reads exact recorded capability readiness without granting authority.",
     "developerName": "ACP",
     "category": "Productivity",
     "capabilities": ["Interactive", "Write"],
     "defaultPrompt": [
       "Create an ACP mission for this objective.",
-      "Show the current status of this ACP mission."
+      "Show the current status of this ACP mission.",
+      "Read recorded readiness for these exact project profile and capability keys."
     ]
   },
   "mcpServers": "./.mcp.json"
