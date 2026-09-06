@@ -87,6 +87,32 @@ but denied by the new strict reader because Git emits a warning.
 
 The composition uses actual native process/fence closure but synthetic database
 ACKs and read-only store ports. Its Git worktree is created by the disposable test
-fixture, not by the non-mutating echo capsule. It does not yet qualify the combined
+fixture, not by the non-mutating echo capsule. It does not qualify the combined
 PostgreSQL-to-native verifier path. The outer gate owns the exact disposable root
 and removes it only after the owned job is empty. No live model or external effect.
+
+## Subsequent actual PostgreSQL qualification
+
+`ProvisionerAdmissions native-stopped-worktree` is a separate 45-second child gate
+under the existing 90-second outer ownership/cleanup bound, using the seeded schema
+through 0021. It creates the linked worktree explicitly before the plan/capsule,
+records actual repository identities, and runs the existing executor with real
+admission and root-claim commitment before native acceptance/GO. Original physical
+close, reported PID absence and native fence sealing precede the durable stop.
+
+Afterward the fixture retires the recorded repository, observes the original
+runtime closed, then replaces the same host's current session. The original
+session remains in immutable history, not a second current-head row. All three
+reader stores use the replacement session and a separate pool with database
+transactions read-only by default, asserted on that connection. This is a fixture
+configuration, not a new production database-role or authorization mechanism.
+
+The real verifier returns the exact original recovering plan and rooted stop,
+retired repository flag, native parent/checkout/common/workspace bindings, branch
+and full base. Timestamp comparison uses canonical UTC microseconds rather than
+rounding through `Date`. Unknown attempt IDs return unconfirmed before native I/O.
+The response has only observation fields. Before/after comparisons retain every
+selected attempt/process/admission/stop/root claim, reservation, four exclusion
+keys, repository/retirement and mission-event row. No worktree binding or worker
+run appears, and common Git metadata hashes remain unchanged. This does not claim
+whole-workspace content verification or a production provisioning outcome.

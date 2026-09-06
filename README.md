@@ -366,6 +366,13 @@ worktree; it does not prove the echo capsule created it or authorize registratio
 hold conversion, release or writing. Historical replacement-reader and retired
 binding inspection do not grant fresh authority. See
 [stopped worktree observation](docs/architecture/0036-stopped-provisioner-worktree-observation.md).
+`pwsh -NoProfile -File scripts/check-postgres.ps1 -ProvisionerAdmissions native-stopped-worktree`
+separately qualifies the actual PostgreSQL-to-native reader through migration
+0021. It runs a fixed echo capsule with real admission and sealed stop, then
+retires the binding and replaces the original runtime. The read-only replacement
+connection verifies the original history against fixture-created Git metadata,
+leaving all four exclusion keys and lifecycle records unchanged. It proves no
+successful creation, worktree registration, release or current writer permission.
 The three `FilesystemLeaseChannelNative` phases are focused, model-free real
 database/native lifecycle checks. Each applies the seeded schema through 0014,
 then runs only its selected scenario; predecessor suites remain separate gates.
