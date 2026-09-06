@@ -29,3 +29,4 @@ explain how its fixed technology choices shape the repository.
 | [0017](0017-inert-provisioner-plans.md) | Inert immutable provisioner attempt plans |
 | [0018](0018-provisioner-target-observation.md) | Standalone native provisioner target observations |
 | [0019](0019-recorded-capability-readiness.md) | Exact recorded capability readiness |
+| [0020](0020-inert-profile-proposals.md) | Inert whole-profile proposals and exact review requests |

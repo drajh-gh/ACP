@@ -146,6 +146,26 @@ export function timestampMilliseconds(value: unknown, path: string): number {
   return Date.parse(expectIsoTimestamp(value, path));
 }
 
+/** PostgreSQL-compatible finite Gregorian UTC timestamp retaining all six fractional digits. */
+export function parseCanonicalTimestamp(value: unknown): string {
+  const input = expectIsoTimestamp(value, "exact timestamp");
+  const parts = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,6}))?(Z|[+-]\d{2}:\d{2})$/u.exec(input);
+  if (!parts || input.startsWith("0000-")) throw new TypeError("exact timestamp must have a Gregorian date and at most six fractional digits");
+  const wall = new Date(`${parts[1]}Z`);
+  if (Number.isNaN(wall.getTime()) || wall.toISOString().slice(0, 19) !== parts[1]) {
+    throw new TypeError("exact timestamp must have a valid Gregorian date and time");
+  }
+  const fraction = (parts[2] ?? "").padEnd(6, "0");
+  const utc = new Date(input).toISOString();
+  if (utc.length !== 24 || utc.startsWith("0000-")) throw new TypeError("exact timestamp UTC year must be between 0001 and 9999");
+  return `${utc.slice(0, 20)}${fraction}Z`;
+}
+
+export function timestampMicroseconds(value: unknown): bigint {
+  const canonical = parseCanonicalTimestamp(value);
+  return BigInt(Date.parse(canonical)) * 1000n + BigInt(canonical.slice(23, 26));
+}
+
 export function expectOptionalIsoTimestamp(
   value: unknown,
   path: string,

@@ -1,7 +1,9 @@
 import { evidenceAccessibilityStates, evidenceFreshnessStates } from "./claims.ts";
 import { parseStableId, type StableId } from "./ids.ts";
 import { capabilityReadinessStates, type CapabilityReadinessState } from "./reconciliation.ts";
-import { expectArray, expectBoolean, expectEnum, expectIsoTimestamp, expectOnlyKeys, expectRecord, expectString } from "./validation.ts";
+import { expectArray, expectBoolean, expectEnum, expectOnlyKeys, expectRecord, expectString,
+  parseCanonicalTimestamp as parseReadinessTimestamp, timestampMicroseconds as readinessTimestampMicroseconds } from "./validation.ts";
+export { parseCanonicalTimestamp as parseReadinessTimestamp, timestampMicroseconds as readinessTimestampMicroseconds } from "./validation.ts";
 
 export const readinessKeyLimit = 50;
 export const projectReadinessSchemaVersion = "2.0.0";
@@ -80,26 +82,6 @@ const assessmentFields = [...scopeFields, ...keyFields, "assessmentId", "recorde
   "assessedAt", "validUntil", "evidenceIds", "evaluatorVersion", "provenanceId", "supersedesAssessmentId"];
 const evidenceFields = ["evidenceId", "observedAt", "retrievedAt", "contentHashPresent", "freshness", "accessibility"];
 const invalidReferences = "readiness snapshot contains invalid or undisclosable references";
-
-/** Exact PostgreSQL-compatible UTC microseconds; no Date-based millisecond identity. */
-export function parseReadinessTimestamp(value: unknown): string {
-  const input = expectIsoTimestamp(value, "readiness timestamp");
-  const parts = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,6}))?(Z|[+-]\d{2}:\d{2})$/u.exec(input);
-  if (!parts || input.startsWith("0000-")) throw new TypeError("readiness timestamp must have a Gregorian date and at most six fractional digits");
-  const wall = new Date(`${parts[1]}Z`);
-  if (Number.isNaN(wall.getTime()) || wall.toISOString().slice(0, 19) !== parts[1]) {
-    throw new TypeError("readiness timestamp must have a valid Gregorian date and time");
-  }
-  const fraction = (parts[2] ?? "").padEnd(6, "0");
-  const utc = new Date(input).toISOString();
-  if (utc.length !== 24 || utc.startsWith("0000-")) throw new TypeError("readiness timestamp UTC year must be between 0001 and 9999");
-  return `${utc.slice(0, 20)}${fraction}Z`;
-}
-
-export function readinessTimestampMicroseconds(value: unknown): bigint {
-  const canonical = parseReadinessTimestamp(value);
-  return BigInt(Date.parse(canonical)) * 1000n + BigInt(canonical.slice(23, 26));
-}
 
 export function readinessKeyIdentity(key: ReadinessKey): string {
   return JSON.stringify([key.capability, key.resourceKey, key.resourceVersion]);
@@ -182,7 +164,7 @@ export function buildProjectReadiness(
       const input = expectRecord(value, "readiness evidence");
       expectOnlyKeys(input, [...evidenceFields.filter(field => field !== "contentHashPresent"), "projectId", "sensitivity", "contentHash"], "readiness evidence");
       const id = parseStableId(input.evidenceId, "evidence");
-      if (input.projectId !== query.projectId || !["public", "project_confidential"].includes(String(input.sensitivity))
+      if (input.projectId !== query.projectId || (input.sensitivity !== "public" && input.sensitivity !== "project_confidential")
         || !referenced.has(id) || seen.has(id)) throw new Error(invalidReferences);
       seen.add(id);
       const contentHash = input.contentHash === null ? null : boundedText(input.contentHash, "evidence content hash", 512);
@@ -308,7 +290,13 @@ function boundedText(value: unknown, label: string, maximum: number): string {
 function boundedArray(value: unknown, label: string, maximum: number, minimum = 0): readonly unknown[] {
   const array = expectArray(value, label);
   if (array.length < minimum || array.length > maximum) throw new TypeError(`${label} exceeds bounded collection`);
-  return array;
+  if (Reflect.ownKeys(array).length !== array.length + 1) throw new TypeError(`${label} must be a dense JSON array`);
+  const dense: unknown[] = [];
+  for (let index = 0; index < array.length; index++) {
+    if (!Object.hasOwn(array, index)) throw new TypeError(`${label} must be a dense JSON array`);
+    dense.push(array[index]);
+  }
+  return dense;
 }
 
 function isPositive(state: CapabilityReadinessState): boolean {

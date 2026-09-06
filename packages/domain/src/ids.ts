@@ -26,6 +26,7 @@ export const idPrefixes = {
   preconditionSnapshot: "pcs",
   project: "prj",
   projectProfile: "pro",
+  projectProfileProposal: "pfp",
   provenance: "prv",
   reconciliation: "rcn",
   receipt: "rcp",

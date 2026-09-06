@@ -49,7 +49,7 @@ describe("exact readiness contracts", () => {
   it("bounds exact query keys without inferring resource or profile aliases", () => {
     assert.deepEqual(parseProjectReadinessQuery(query), query);
     for (const input of [
-      { ...query, keys: [] }, { ...query, keys: [key, key] },
+      { ...query, keys: [] }, { ...query, keys: [key, key] }, { ...query, keys: Array(1) },
       { ...query, keys: Array.from({ length: 51 }, (_, i) => ({ ...key, capability: `test-${i}` })) },
       { ...query, keys: [{ ...key, resourceKey: " repository:fixture" }] },
       { ...query, keys: [{ ...key, resourceVersion: "binding-1\n" }] },
@@ -85,9 +85,11 @@ describe("exact readiness contracts", () => {
     assert.equal(parsed.supersedesAssessmentId, null);
     assert.match(parsed.assessmentId, /^cra_/u);
     const predecessor = createStableId("capabilityReadinessAssessment");
+    const iteratorEvidence = [evidenceId];
+    Object.defineProperty(iteratorEvidence, Symbol.iterator, { value: function* () {} });
     assert.equal(parseReadinessAssessment({ ...input, supersedesAssessmentId: predecessor }).supersedesAssessmentId, predecessor);
     for (const invalid of [
-      { evidenceIds: [evidenceId, evidenceId] }, { evidenceIds: [] },
+      { evidenceIds: [evidenceId, evidenceId] }, { evidenceIds: [] }, { evidenceIds: Array(1) }, { evidenceIds: iteratorEvidence },
       { evidenceIds: Array.from({ length: 21 }, () => createStableId("evidence")) },
       { recordedReason: "x".repeat(2001) }, { recordedState: "ready" }, { evaluatorVersion: " " },
       { validUntil: input.assessedAt }, { validUntil: "2026-09-07T00:00:00.000001Z" },
@@ -147,7 +149,8 @@ describe("read-only readiness projection", () => {
   });
 
   it("denies an entire snapshot generically before disclosing bad references", () => {
-    for (const refs of [[], [evidence({ sensitivity: "restricted" })], [evidence({ projectId: createStableId("project") })]]) {
+    for (const refs of [[], [evidence({ sensitivity: "restricted" })], [evidence({ sensitivity: ["public"] })],
+      [evidence({ sensitivity: ["project_confidential"] })], [evidence({ sensitivity: {} })], [evidence({ projectId: createStableId("project") })]]) {
       assert.throws(() => snapshot([assessment()], refs), /^Error: readiness snapshot contains invalid or undisclosable references$/);
     }
     assert.throws(() => snapshot([assessment()], [evidence({ sourceRef: "credential-bearing-private-source" })]));

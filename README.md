@@ -18,6 +18,9 @@ deployed autonomous service.
   microsecond expiry, persistent revocation semantics, immutable assessment/evidence
   pins and bounded single-snapshot reads exposed through authenticated read-only
   `get_project_readiness`; no live probes or readiness writer are exposed
+- an inert 62-field whole-profile proposal contract with explicit discovery gaps,
+  conflicts and exact review-request digests; no profile publication or operator
+  confirmation is inferred
 - deterministic effect-transition, approval-drift, cursor, and kill-switch
   guards
 - reversible PostgreSQL migrations, an up/down-checksum-aware runner, and stores for

@@ -1,4 +1,6 @@
 import "./ids.test.ts";
+import "./exact-time.test.ts";
+import "./profile-proposal.test.ts";
 import "./lifecycle.test.ts";
 import "./intake.test.ts";
 import "./claims.test.ts";
