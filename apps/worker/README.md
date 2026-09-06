@@ -351,6 +351,38 @@ technical operation/resource enforcement from these observations.
 
 ## Verification
 
+### Native provisioner admission primitive
+
+The disjoint one-shot mode in `WindowsWorkerJob` keeps provisioners suspended
+until one exact native challenge is accepted, then permits one dedicated GO.
+Original pre-creation QPC deadlines and challenge-issuance-age expiry cannot be
+renewed. This is not a database authenticator or a production launch transport;
+the WPA fence, sealed closure, full plan binding and restricted filesystem
+authority still need separate integration. See
+[ADR0027](../../docs/architecture/0027-native-provisioner-admission.md).
+
+Run all four exact phases sequentially, followed by existing worker and renewable
+lease regressions because they share the native job owner:
+
+```powershell
+pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite provisioner-admission -TestNamePattern '^provisioner admission core:'
+pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite provisioner-admission -TestNamePattern '^provisioner admission modes:'
+pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite provisioner-admission -TestNamePattern '^provisioner admission expiry:'
+pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite provisioner-admission -TestNamePattern '^provisioner admission bootstrap:'
+pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite supervision -TestNamePattern '^(native suspended|root exit|abort kills|output overflow|legal large|non-reading|daemon death|persisted deadline|native watchdog)'
+pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite supervision -TestNamePattern '^(recovery terminates|recovery observes)'
+pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite supervision -TestNamePattern '^(recovery with|historical journals|aborting a spawned)'
+pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite lease-watchdog
+pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite lease-liveness
+pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite lease-bootstrap
+```
+
+Denial and stalled-loop assertions observe native tree stop before test cleanup.
+All reported processes and the outer job must exit. These probes never invoke
+Git, a model or a database, and do not prove a production filesystem sandbox.
+The three positive worker filters cover its complete suite without increasing
+the existing per-gate bounds; an unfiltered invocation may exceed that budget.
+
 ### Native-only provisioner fence
 
 `describeWindowsProvisionerFence` and `sealWindowsProvisionerAttempt` observe and

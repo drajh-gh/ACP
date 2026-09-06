@@ -1,7 +1,8 @@
-param([switch]$Internal, [ValidateSet('supervision', 'launch-fence', 'provisioner-fence', 'filesystem', 'filesystem-pins', 'provisioner-observation', 'lease-watchdog', 'lease-liveness', 'lease-bootstrap', 'lease-channel', 'lease-channel-liveness')][string]$Suite = 'supervision', [string]$TestNamePattern, [string]$OwnedFixtureRun)
+param([switch]$Internal, [ValidateSet('supervision', 'launch-fence', 'provisioner-fence', 'provisioner-admission', 'filesystem', 'filesystem-pins', 'provisioner-observation', 'lease-watchdog', 'lease-liveness', 'lease-bootstrap', 'lease-channel', 'lease-channel-liveness')][string]$Suite = 'supervision', [string]$TestNamePattern, [string]$OwnedFixtureRun)
 $ErrorActionPreference = 'Stop'
 if ($Suite -eq 'provisioner-observation' -and -not $TestNamePattern) { throw 'Select a bounded provisioner observation phase with -TestNamePattern; see README.' }
 if ($Suite -eq 'provisioner-fence' -and $TestNamePattern -notin @('^provisioner core:', '^provisioner safety:')) { throw 'Select an exact bounded provisioner fence core or safety phase; see README.' }
+if ($Suite -eq 'provisioner-admission' -and $TestNamePattern -notin @('^provisioner admission core:', '^provisioner admission modes:', '^provisioner admission expiry:', '^provisioner admission bootstrap:')) { throw 'Select an exact bounded provisioner admission phase; see README.' }
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'native-channel-fixture.ps1')
 if (-not $Internal) {
@@ -57,6 +58,7 @@ if ($Suite -in @('filesystem-pins', 'provisioner-observation', 'launch-fence', '
 $testFile = switch ($Suite) {
   'launch-fence' { 'apps/worker/test/integration/windows-launch-fence.test.ts' }
   'provisioner-fence' { 'apps/worker/test/integration/windows-provisioner-fence.test.ts' }
+  'provisioner-admission' { 'apps/worker/test/integration/windows-provisioner-admission.test.ts' }
   'filesystem' { 'apps/worker/test/integration/windows-filesystem.test.ts' }
   'filesystem-pins' { 'apps/worker/test/integration/windows-linked-worktree-pins.test.ts' }
   'provisioner-observation' { 'apps/worker/test/integration/windows-provisioner-observation.test.ts' }
