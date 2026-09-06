@@ -1,6 +1,7 @@
 export * from "./database.ts";
 export * from "./context-store.ts";
 export * from "./dispatch-store.ts";
+export * from "./attention-store.ts";
 export * from "./control-store.ts";
 export * from "./counterpart-store.ts";
 export { counterpartMissionCollectionLimit, counterpartMissionMaximumBytes, counterpartMissionNodeStates,

@@ -2,7 +2,7 @@
 
 ACP is an always-on control plane for durable, policy-governed Codex work. The
 repository is being implemented from [specification version 1.0.0](SPECIFICATION.md).
-M0 and M1 are complete. M2 and independent M3 foundations are in progress; the current candidate is not yet a
+M0 and M1 are complete. M2 and independent M3/M5 foundations are in progress; the current candidate is not yet a
 deployed autonomous service.
 
 ## Current slice
@@ -14,6 +14,10 @@ deployed autonomous service.
 - completion-contract evaluation that cannot imply sibling lifecycle state
 - runtime-validated intake, claim, approval, workflow, capability, readiness,
   and reconciliation contracts
+- a bounded recorded attention contract and immutable canonical/request-alias
+  ledger with project-key deduplication, exact historical replay and single-snapshot
+  queue reads; disclosure includes indirect preview evidence and pagination
+  lookahead, with no decisions, notifications, public writer or readiness inference
 - an additive recorded readiness matrix with exact profile/resource identity,
   microsecond expiry, persistent revocation semantics, immutable assessment/evidence
   pins and bounded single-snapshot reads exposed through authenticated read-only

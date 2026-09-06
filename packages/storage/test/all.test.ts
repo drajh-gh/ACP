@@ -1,4 +1,5 @@
 import "./migration.test.ts";
+import "./attention-store.test.ts";
 import "./migration-session.test.ts";
 import "./stores.test.ts";
 import "./worker-runtime-store.test.ts";
