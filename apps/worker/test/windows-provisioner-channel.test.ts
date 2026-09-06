@@ -74,6 +74,18 @@ it("provisioner channel protocol corruption after GO cannot become a controller 
   };
   const result=await c.controller().run(session,f.channel.signal);assert.equal(result.state,"unconfirmed");assert.equal(result.authorityLost,true);assert.equal(result.goAttempted,true);assert.equal(c.writes,0);
 });
+it("provisioner channel late READY after cancellation is owned identity for cleanup, never GO permission",async()=>{
+  const f=fixture(),c=controllerFixture(f),stopping=f.channel.terminate();void stopping.catch(()=>{});
+  c.admissions.admit=async()=>{assert.fail("cancelled late identity must not admit");};
+  let seenReady=false,running:ReturnType<NativeProvisionerAdmissionController["run"]>|undefined;
+  void f.channel.ready.then(()=>{seenReady=true;},()=>{});
+  const result=await checkedAndDrained(async()=>{
+    f.feed({type:"ready",request:f.request});await turn();assert.equal(seenReady,true);assert.equal(f.channel.signal.aborted,true);
+    const session=await f.channel.ready;running=c.controller().run(session,AbortSignal.any([AbortSignal.abort(),f.channel.signal]));
+    await turn();assert.equal(c.writes,0);assert.equal(f.stops,1);assert.deepEqual(f.frames,[]);
+  },async()=>{f.feed({type:"closed",failed:true,stop:f.stop});f.channel.transportClosed(0,null);await stopping;return running;});
+  assert.equal(result?.state,"stop_recorded");assert.equal(result?.authorityLost,true);assert.equal(result?.goAttempted,false);assert.equal(c.writes,1);
+});
 it("provisioner channel preserves exact READY and snapshots original binding",async()=>{
   const f=fixture();f.binding.expectedPlan.reservationRevision=8;f.binding.owner.applicationVersion="changed";f.binding.fencePlan.directory="C:\\other";
   const session=await f.ready();assert.deepEqual(session.request,f.request);assert.deepEqual(session.expectedPlan,f.expectedPlan);
@@ -85,6 +97,24 @@ it("provisioner channel valid CLOSED is provisional until physical process and p
   const f=fixture(),session=await f.accepted();session.go();let settled=false;void session.closed.then(()=>{settled=true;});
   f.feed({type:"closed",failed:false,stop:f.stop});await turn();assert.equal(settled,false);assert.equal(f.channel.signal.aborted,false);
   assert.throws(()=>session.go());f.channel.transportClosed(0,null);assert.deepEqual(await session.closed,f.stop);assert.equal(settled,true);
+});
+it("provisioner channel valid terminal EOF preserves provisional evidence until actual child close",async()=>{
+  const f=fixture(),session=await f.accepted();session.go();let settled=false;void session.closed.then(()=>{settled=true;});
+  f.feed({type:"closed",failed:false,stop:f.stop});f.channel.endOutput();f.channel.endOutput();await turn();
+  assert.equal(settled,false);assert.equal(f.channel.signal.aborted,false);assert.equal(f.drains,1);assert.equal(f.stops,0);
+  assert.throws(()=>f.channel.outputBytes());f.channel.transportClosed(0,null);assert.deepEqual(await session.closed,f.stop);
+});
+it("provisioner channel missing terminal, partial frame and truncated UTF8 revoke authority at EOF without settling ownership",async()=>{
+  for(const suffix of [Buffer.alloc(0),Buffer.from('{"type":"closed"'),Buffer.from([0xf0,0x9f])]) {
+    const f=fixture(),session=await f.accepted();session.go();let settled=false;void session.closed.catch(()=>{settled=true;});
+    f.channel.feed(suffix);f.channel.endOutput();await turn();
+    assert.equal(f.channel.signal.aborted,true);assert.equal(f.stops,1);assert.equal(settled,false);
+    f.channel.transportClosed(0,null);await assert.rejects(session.closed);
+  }
+});
+it("provisioner channel rejects data after output EOF before physical closure",async()=>{
+  const f=fixture(),session=await f.accepted();session.go();f.feed({type:"closed",failed:false,stop:f.stop});f.channel.endOutput();
+  f.channel.feed(Buffer.from("x"));assert.equal(f.channel.signal.aborted,true);f.channel.transportClosed(0,null);await assert.rejects(session.closed);
 });
 it("provisioner channel provisional terminal starts bounded physical drain without another wire command",async()=>{
   const f=fixture(),session=await f.accepted();session.go();f.feed({type:"closed",failed:false,stop:f.stop});

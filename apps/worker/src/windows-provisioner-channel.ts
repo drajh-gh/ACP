@@ -45,6 +45,7 @@ export class WindowsProvisionerChannel {
   private stopping=false;
   private draining=false;
   private corrupt=false;
+  private outputEnded=false;
   private ended=false;
   constructor(binding:NativeProvisionerChannelBinding,io:{send(frame:unknown):void;
     /** Always begin bounded transport drain/termination; send a stop frame only when true. */
@@ -63,6 +64,7 @@ export class WindowsProvisionerChannel {
   }
   feed(data:Uint8Array):void {
     if(this.ended || this.corrupt)return;
+    if(this.outputEnded){this.protocolFailure();return;}
     try {
       // Bound buffering per frame while allowing coalesced frames in one chunk.
       for(let offset=0;offset<data.byteLength;offset+=4096)this.consume(this.decoder.decode(data.subarray(offset,offset+4096),{stream:true}));
@@ -71,11 +73,19 @@ export class WindowsProvisionerChannel {
   /** Transport I/O/timeout failure may still be followed by valid physical stop. */
   failTransport():void {this.requestStop();}
   terminate():Promise<void> {this.requestStop();return this.closed.then(()=>{});}
+  /** EOF ends evidence delivery, not process ownership. A valid terminal frame
+   * remains provisional; missing/truncated evidence immediately revokes GO. */
+  endOutput():void {
+    if(this.outputEnded)return;
+    this.outputEnded=true;
+    try {
+      if(!this.corrupt){this.consume(this.decoder.decode());if(this.buffered!=="" || !this.terminal)throw new Error("incomplete native evidence stream");}
+    } catch {this.protocolFailure();}
+  }
   transportClosed(exitCode:number|null,signal:string|null):void {
     if(this.ended)return;
     this.ended=true;
-    try {if(!this.corrupt){this.consume(this.decoder.decode());if(this.buffered!=="")throw new Error("partial native frame");}}
-    catch {this.protocolFailure();}
+    this.endOutput();
     this.rejectPending(new Error("native provisioner channel closed"));
     if(exitCode!==0 || signal!==null || !this.evidence || this.corrupt || this.stage!=="go_sent")this.failure.abort();
     if(this.evidence && !this.corrupt)this.completion.resolve(this.evidence);
@@ -103,7 +113,9 @@ export class WindowsProvisionerChannel {
       if(request.attemptId!==b.attemptId || request.fence.namespace!==b.fencePlan.namespace || request.fence.directory!==b.fencePlan.directory
         || request.fence.scope.machineFingerprint!==b.machineFingerprint)throw new Error("native readiness differs from original plan");
       this.request=request;this.stage="suspended";
-      if(!this.stopping)this.readiness.resolve(Object.freeze({request,expectedPlan:b.expectedPlan,closed:this.closed,
+      // READY is owned identity, never GO authority. A valid late observation
+      // after cancellation still lets the pre-aborted controller persist stop.
+      this.readiness.resolve(Object.freeze({request,expectedPlan:b.expectedPlan,closed:this.closed,
         acceptAdmission:(ack:ProvisionerAdmissionAcknowledgement)=>this.accept(ack),go:()=>this.go(),terminate:()=>this.terminate()}));
     } else if(frame.type==="accepted") {
       exact(frame,["type","acceptance"]);if(this.stage!=="admitting" || (!this.pending && !this.stopping))throw new Error("unsolicited native acceptance");

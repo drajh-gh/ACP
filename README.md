@@ -306,6 +306,14 @@ The `provisioner-fence` suite requires the exact `^provisioner core:` or
 `^provisioner safety:` phase. Run both sequentially and all three `launch-fence`
 regression phases above; these exercise native one-shot sealing and synthetic tree cleanup,
 not a database-bound provisioner lifecycle. See [the native fence contract](docs/architecture/0022-native-provisioner-fence.md).
+The private `provisioner-runner` suite requires one exact bounded phase:
+`^provisioner runner core:`, `^provisioner runner loss:` or
+`^provisioner runner expiry:`. Run all three sequentially with
+`pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite provisioner-runner -TestNamePattern '^provisioner runner core:'`
+(substitute the other phase names). It exercises actual Windows ownership and
+controller ordering with synthetic database ports and a fixed model-free capsule.
+No Git mutation, restricted filesystem access or production dispatch is enabled.
+See [the owned runner contract](docs/architecture/0030-owned-provisioner-process-runner.md).
 The three `FilesystemLeaseChannelNative` phases are focused, model-free real
 database/native lifecycle checks. Each applies the seeded schema through 0014,
 then runs only its selected scenario; predecessor suites remain separate gates.
