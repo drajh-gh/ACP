@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'none'; img-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="color-scheme" content="dark">
+  <title>ACP — Operations prototype</title>
+  <link rel="stylesheet" href="styles.css">
+  <script defer src="model.js"></script>
+  <script defer src="app.js"></script>
+</head>
+<body>
+<!-- THESIS: ACP keeps the next decision beside the final outcome, not a wall of metrics.
+OWN-WORLD: Supplied airport-operations brief: navy ink, amber decisions, teal evidence; aligned rows and functional checkpoints.
+STORY: Find a request, inspect uncertainty, review exact scope, and retain outstanding obligations.
+FIRST VIEWPORT: Narrow navigation, three-column request board, adjacent 520px review desk; amber scope action stays with its limits. A selected request drives the named journey strip without moving other rows.
+FORM: User-pinned Operations board and adjacent Secondary review from AIRPORT_UX_UI_SPECIFICATION; no open-world concept selection. Code-first confirmed. No decorative motion; state/focus remain stable.
+FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance -->
+  <a class="skip-link" href="#operations">Skip to Operations</a>
+  <div class="prototype-bar"><strong>INTERACTIVE PROTOTYPE</strong><span>Illustrative data. No live approvals, messages or execution.</span><button id="reset" type="button">Reset sample</button></div>
+  <div class="shell">
+    <aside class="sidebar" aria-label="ACP navigation">
+      <div class="brand"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M5 24V8h9l5 8-5 8H5Zm14-8h8M23 12l4 4-4 4"/></svg><span>ACP</span></div>
+      <div class="project-name"><span>SZS / SloSki</span><small>Sample workspace</small></div>
+      <nav aria-label="Workspace">
+        <button type="button" class="nav-item active" data-filter="decisions"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM4 10h16M10 10v9"/></svg>Operations</button>
+        <button type="button" class="nav-item" data-filter="waiting"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></svg>Waiting</button>
+        <button type="button" class="nav-item" data-filter="completed"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM8 12l3 3 5-6"/></svg>Completed</button>
+        <button type="button" class="nav-item" id="readiness-open"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 17h16M8 4v6M16 14v6"/></svg>Project readiness</button>
+      </nav>
+      <div class="sidebar-bottom"><span class="connection-state">No live connections</span><p>Review the experience.<br>Nothing leaves this page.</p><span class="operator">D <span>David<small>Prototype operator</small></span></span></div>
+    </aside>
+    <main id="operations" tabindex="-1">
+      <header class="page-header"><div><h1>Operations</h1><p>Requests, decisions and outstanding work.</p></div><span class="sample-stamp">SAMPLE SNAPSHOT<br><strong>5 requests · no live clock</strong></span></header>
+      <div id="coverage" class="coverage" hidden role="status"></div>
+      <div class="work-area">
+        <section class="board" aria-label="Request operations board">
+          <div class="filters" aria-label="Filter requests">
+            <button type="button" data-filter="decisions" aria-pressed="true">Needs your decision <span data-count="decisions"></span></button>
+            <button type="button" data-filter="active" aria-pressed="false">All active <span data-count="active"></span></button>
+            <button type="button" data-filter="waiting" aria-pressed="false">Waiting <span data-count="waiting"></span></button>
+          </div>
+          <div class="board-toolbar"><label class="search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></svg><input id="search" type="search" placeholder="Find a request" aria-label="Find a sample request" maxlength="200"></label><span id="row-count"></span></div>
+          <div class="table-scroll"><table><caption class="sr-only">Illustrative requests and their next decisions. Select a request to review it.</caption><thead><tr><th scope="col">Request / final outcome</th><th scope="col">Checkpoint / next owner</th><th scope="col">Age</th></tr></thead><tbody id="request-rows"></tbody></table><div id="empty" class="empty" hidden></div></div>
+          <section class="journey-overview" aria-labelledby="journey-heading"><div class="section-heading"><h2 id="journey-heading">Selected journey</h2><span id="journey-id" class="mono"></span></div><p id="journey-description"></p><ol id="journey-strip" class="journey-strip"></ol><p class="journey-key">A checkpoint is not the final outcome. Pending and incomplete checks remain outstanding.</p></section>
+          <details class="prototype-controls"><summary>Try a different sample condition</summary><div><button type="button" id="drift">Simulate changed scope</button><button type="button" id="coverage-toggle">Simulate source gap</button><button type="button" id="return-signal">Simulate linked-ticket return</button></div><p>These controls change this page’s sample state only. Reloading or resetting discards all changes.</p></details>
+        </section>
+        <section class="review" aria-label="Secondary review workspace" id="review-workspace">
+          <div class="review-top"><span class="desk-label">Secondary review</span><button class="back-button" id="close-review" type="button">Back to board</button></div>
+          <div id="review-header"></div>
+          <div class="review-tabs" role="tablist" aria-label="Request details"><button type="button" id="tab-review" role="tab" aria-controls="review-content" aria-selected="true" data-tab="review">Review</button><button type="button" id="tab-evidence" role="tab" aria-controls="review-content" aria-selected="false" tabindex="-1" data-tab="evidence">Evidence</button><button type="button" id="tab-journey" role="tab" aria-controls="review-content" aria-selected="false" tabindex="-1" data-tab="journey">Journey &amp; record</button></div>
+          <div class="review-scroll" id="review-content" role="tabpanel" aria-labelledby="tab-review" tabindex="0"></div>
+          <div class="review-actions" id="review-actions"></div>
+        </section>
+      </div>
+      <p id="notice" class="notice" role="status" aria-live="polite" aria-atomic="true"></p>
+    </main>
+  </div>
+  <dialog id="readiness-dialog" aria-labelledby="readiness-title"><h2 id="readiness-title">Project readiness</h2><p>This prototype has no live connections. These are integration prerequisites, not current health assessments.</p><dl><dt>Gmail, tracker and GitHub</dt><dd>Not connected to this prototype</dd><dt>Operator authentication</dt><dd>Required before real console actions</dd><dt>Production changes</dt><dd>Reviewed manual handoff in the initial product</dd></dl><button type="button" id="readiness-close">Return to Operations</button></dialog>
+  <noscript>This prototype needs JavaScript for sample interactions. It does not connect to a live ACP service.</noscript>
+</body>
+</html>

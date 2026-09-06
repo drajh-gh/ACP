@@ -11,7 +11,8 @@
     "packages/*"
   ],
   "scripts": {
-    "test": "node --experimental-strip-types --test packages/domain/test/all.test.ts packages/storage/test/all.test.ts apps/worker/test/all.test.ts apps/control-api/test/all.test.ts",
+    "test": "node --experimental-strip-types --test --test-concurrency=1 packages/domain/test/all.test.ts packages/storage/test/all.test.ts apps/worker/test/all.test.ts apps/control-api/test/all.test.ts prototypes/operations/model.test.mjs",
+    "test:operations-prototype": "node --test --test-concurrency=1 prototypes/operations/model.test.mjs",
     "typecheck": "tsc --project tsconfig.json",
     "check:secrets": "node scripts/check-secrets.mjs",
     "test:dbos-recovery": "pwsh -NoProfile -File scripts/check-dbos-recovery.ps1",

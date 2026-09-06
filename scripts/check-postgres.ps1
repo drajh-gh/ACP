@@ -19,6 +19,8 @@ param(
   [string]$CounterpartSessions,
   [ValidateSet('core', 'races', 'references', 'snapshot', 'upgrade', 'http', 'source-core', 'source-races', 'source-upgrade')]
   [string]$AttentionQueue,
+  [ValidateSet('core', 'races', 'upgrade')]
+  [string]$RequestIdentity,
   [ValidateSet('core', 'races', 'expiry', 'upgrade', 'regression')]
   [string]$ProvisionerPlans,
   [ValidateSet('core', 'races', 'expiry', 'upgrade', 'regression')]
@@ -40,6 +42,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+if ($RequestIdentity -and ($LifecycleOnly -or $HostOnly -or $LaunchRecovery -or $LaunchNative -or $FilesystemBindings -or $RepositoryBindingOnly -or $FilesystemNative -or $FilesystemLeases -or $FilesystemLeaseNative -or $FilesystemLeaseChannelNative -or $WorktreeReservations -or $MigrationSessions -or $CounterpartStatus -or $CounterpartSessions -or $ProvisionerPlans -or $ProvisionerJournal -or $ProvisionerAdmissions -or $NativeRootClaims -or $Readiness -or $ProfileProposals -or $AttentionQueue)) { throw 'RequestIdentity is a standalone bounded gate' }
 if ($AttentionQueue -and ($LifecycleOnly -or $HostOnly -or $LaunchRecovery -or $LaunchNative -or $FilesystemBindings -or $RepositoryBindingOnly -or $FilesystemNative -or $FilesystemLeases -or $FilesystemLeaseNative -or $FilesystemLeaseChannelNative -or $WorktreeReservations -or $MigrationSessions -or $CounterpartStatus -or $CounterpartSessions -or $ProvisionerPlans -or $ProvisionerJournal -or $ProvisionerAdmissions -or $NativeRootClaims -or $Readiness -or $ProfileProposals)) { throw 'AttentionQueue is a standalone bounded gate' }
 if ($CounterpartSessions -and ($LifecycleOnly -or $HostOnly -or $LaunchRecovery -or $LaunchNative -or $FilesystemBindings -or $RepositoryBindingOnly -or $FilesystemNative -or $FilesystemLeases -or $FilesystemLeaseNative -or $FilesystemLeaseChannelNative -or $WorktreeReservations -or $MigrationSessions -or $CounterpartStatus -or $ProvisionerPlans -or $ProvisionerJournal -or $ProvisionerAdmissions -or $NativeRootClaims -or $Readiness -or $ProfileProposals)) { throw 'CounterpartSessions is a standalone bounded gate' }
 if ($ProvisionerAdmissions -and ($LifecycleOnly -or $HostOnly -or $LaunchRecovery -or $LaunchNative -or $FilesystemBindings -or $RepositoryBindingOnly -or $FilesystemNative -or $FilesystemLeases -or $FilesystemLeaseNative -or $FilesystemLeaseChannelNative -or $WorktreeReservations -or $MigrationSessions -or $CounterpartStatus -or $ProvisionerPlans -or $ProvisionerJournal -or $NativeRootClaims -or $Readiness -or $ProfileProposals)) { throw 'ProvisionerAdmissions is a standalone bounded gate' }
@@ -140,6 +143,7 @@ if (-not $Internal) {
   if ($CounterpartStatus) { $commandLine += ' -CounterpartStatus ' + $CounterpartStatus }
   if ($CounterpartSessions) { $commandLine += ' -CounterpartSessions ' + $CounterpartSessions }
   if ($AttentionQueue) { $commandLine += ' -AttentionQueue ' + $AttentionQueue }
+  if ($RequestIdentity) { $commandLine += ' -RequestIdentity ' + $RequestIdentity }
   if ($ProvisionerPlans) { $commandLine += ' -ProvisionerPlans ' + $ProvisionerPlans }
   if ($ProvisionerJournal) { $commandLine += ' -ProvisionerJournal ' + $ProvisionerJournal }
   if ($ProvisionerAdmissions) { $commandLine += ' -ProvisionerAdmissions ' + $ProvisionerAdmissions }
@@ -402,7 +406,7 @@ try {
     Write-Host 'Migration session integration passed; removing only the owned disposable database container.'
     return
   }
-  if ($RepositoryBindingOnly -or $FilesystemLeaseChannelNative -or $WorktreeReservations -or $CounterpartStatus -or $ProvisionerPlans -or $ProvisionerJournal -or $ProvisionerAdmissions -or $NativeRootClaims -or $Readiness -or $ProfileProposals -or $AttentionQueue) {
+  if ($RepositoryBindingOnly -or $FilesystemLeaseChannelNative -or $WorktreeReservations -or $CounterpartStatus -or $ProvisionerPlans -or $ProvisionerJournal -or $ProvisionerAdmissions -or $NativeRootClaims -or $Readiness -or $ProfileProposals -or $AttentionQueue -or $RequestIdentity) {
     # Focused real database/native phases apply the same seeded schema directly.
     # Unrelated predecessor suites cannot consume their bounded child's budget.
     $focusedMigrations = @('0006_host_dispatch.sql', '0007_supervised_workers.sql', '0008_worker_recovery.sql',
@@ -414,6 +418,14 @@ try {
       if ($NativeRootClaims -eq 'legacy' -and $migration -eq '0007_supervised_workers.sql') {
         Invoke-AcpNodeCheck 'packages/storage/test/integration/native-root-legacy.ts' 'Genuine pre-scope supervised worker history' 'before' -TimeoutSeconds 30
       }
+    }
+    if ($RequestIdentity) {
+      foreach ($migration in @('0015_worktree_target_holds.sql','0016_worktree_provisioner_attempts.sql','0017_capability_readiness.sql','0018_project_profile_proposals.sql','0019_provisioner_process_journal.sql','0020_windows_native_root_claims.sql','0021_provisioner_admissions.sql','0022_attention_items.sql','0023_unknown_outcome_attention.sql','0024_request_identity.sql')) {
+        Invoke-AcpSqlFile ('packages/storage/migrations/' + $migration) ('Request identity prerequisite: ' + $migration)
+      }
+      Invoke-AcpNodeCheck 'packages/storage/test/integration/requests.ts' 'Request identity integration' $RequestIdentity -TimeoutSeconds 30
+      Write-Host 'Focused request identity phase passed; no workflow, approval, closure or external effect was executed.'
+      return
     }
     if ($AttentionQueue) {
       foreach ($migration in @('0015_worktree_target_holds.sql','0016_worktree_provisioner_attempts.sql','0017_capability_readiness.sql','0018_project_profile_proposals.sql','0019_provisioner_process_journal.sql','0020_windows_native_root_claims.sql','0021_provisioner_admissions.sql','0022_attention_items.sql')) {

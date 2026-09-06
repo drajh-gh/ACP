@@ -5,10 +5,24 @@ repository is being implemented from [specification version 1.0.0](SPECIFICATION
 M0 and M1 are complete. M2 and independent M3/M5 foundations are in progress; the current candidate is not yet a
 deployed autonomous service.
 
+The next delivery phase is the [product-led ACP slice](docs/implementation/PRODUCT_SLICE.md):
+an Operations board and decision-flow prototype, then one durable end-to-end
+request journey. The [product contract](docs/ACP_PRODUCT_SPECIFICATION.md) and
+[UX/UI direction](docs/AIRPORT_UX_UI_SPECIFICATION.md) complement the technical
+specification; their remaining proposed policies are not silently activated.
+
+Open the [Operations prototype](prototypes/operations/index.html) locally in a
+browser to review synthetic requests and decisions. It needs no server or login
+and cannot authorize or execute work. See the [review guide](prototypes/operations/README.md).
+
 ## Current slice
 
 - npm workspaces with TypeScript source
 - stable, typed domain identifiers
+- private immutable request identity and same-project mission associations, with
+  constructor-owned recording provenance, exact replay and server-owned time;
+  this [policy-neutral foundation](docs/architecture/0039-request-identity.md)
+  does not start work, approve scope, decide closure or connect the prototype
 - orthogonal mission, candidate, deployment, acceptance, tracker, effect, and
   business-completion state
 - completion-contract evaluation that cannot imply sibling lifecycle state

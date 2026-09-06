@@ -1,0 +1,175 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-06T16:41:00Z",
+  "title": "Design System: ACP Operations",
+  "extensions": {
+    "colorMeta": {
+      "ink": {
+        "role": "neutral",
+        "displayName": "Operations ink"
+      },
+      "panel": {
+        "role": "neutral",
+        "displayName": "Console panel"
+      },
+      "white": {
+        "role": "neutral",
+        "displayName": "Instrument white"
+      },
+      "amber": {
+        "role": "primary",
+        "displayName": "Attention amber"
+      },
+      "teal": {
+        "role": "secondary",
+        "displayName": "Verified teal"
+      },
+      "red": {
+        "role": "tertiary",
+        "displayName": "Exception red"
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Supporting text"
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "Operational divider"
+      },
+      "nav": {
+        "role": "neutral",
+        "displayName": "Navigation surface"
+      },
+      "hover": {
+        "role": "neutral",
+        "displayName": "Hover surface"
+      },
+      "field": {
+        "role": "neutral",
+        "displayName": "Field surface"
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Operational heading",
+        "purpose": "Short page headings; supplied prototype font choice with fallbacks."
+      },
+      "body": {
+        "displayName": "Reading and interaction",
+        "purpose": "Interface prose and controls."
+      },
+      "mono": {
+        "displayName": "Identifiers and ages",
+        "purpose": "Compact metadata with tabular numerals."
+      }
+    },
+    "shadows": [
+      {
+        "name": "selection-underline",
+        "value": "0 2px 0 var(--amber, #f3c65c)",
+        "purpose": "Selected filter and review-tab underline; not elevation."
+      }
+    ],
+    "motion": [
+      {
+        "name": "button-fill",
+        "value": "background-color 160ms ease-out",
+        "purpose": "Button state feedback; removed for prefers-reduced-motion: reduce."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "compact-desktop",
+        "value": "1300px"
+      },
+      {
+        "name": "single-workspace",
+        "value": "1050px"
+      },
+      {
+        "name": "horizontal-navigation",
+        "value": "640px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary action",
+      "kind": "button",
+      "description": "Exact decision action, with a disabled sample alongside.",
+      "html": "<div class=\"ds-stage\"><button class=\"ds-primary\" type=\"button\">Approve scope</button> <button class=\"ds-primary\" type=\"button\" disabled>Scope approved in sample</button></div>",
+      "css": ".ds-stage{background:var(--ink,#101d2c);padding:16px;font:14px/1.5 var(--body-font,\"Segoe UI\",system-ui,sans-serif)}.ds-primary{font:inherit;cursor:pointer;border:1px solid transparent;border-radius:4px;min-height:40px;padding:8px 12px;background:var(--amber,#f3c65c);color:var(--ink,#101d2c);font-weight:600;transition:background-color 160ms ease-out}.ds-primary:hover{background:#ffda80}.ds-primary:active{background:#e1b449}.ds-primary:focus-visible{outline:2px solid var(--amber,#f3c65c);outline-offset:3px}.ds-primary:disabled{cursor:not-allowed;background:var(--field,#142538);color:var(--muted,#afbed0);border-color:var(--line,#395069)}@media(prefers-reduced-motion:reduce){.ds-primary{transition:none}}"
+    },
+    {
+      "name": "Secondary action",
+      "kind": "button",
+      "description": "Quiet bordered action used for editing and returning.",
+      "html": "<div class=\"ds-stage\"><button class=\"ds-secondary\" type=\"button\">Edit scope</button></div>",
+      "css": ".ds-stage{background:var(--ink,#101d2c);padding:16px;font:14px/1.5 var(--body-font,\"Segoe UI\",system-ui,sans-serif)}.ds-secondary{font:inherit;cursor:pointer;border:1px solid var(--line,#395069);border-radius:4px;color:var(--white,#eff4f8);background:transparent;min-height:40px;padding:8px 12px;transition:background-color 160ms ease-out}.ds-secondary:hover{background:var(--hover,#243d55)}.ds-secondary:active{background:var(--panel,#1a2e43)}.ds-secondary:focus-visible{outline:2px solid var(--amber,#f3c65c);outline-offset:3px}.ds-secondary:disabled{cursor:not-allowed;color:var(--muted,#afbed0);background:var(--field,#142538)}@media(prefers-reduced-motion:reduce){.ds-secondary{transition:none}}"
+    },
+    {
+      "name": "Scope editor field",
+      "kind": "input",
+      "description": "Inline editable scope; the application reveals and focuses this field when editing starts.",
+      "html": "<div class=\"ds-editor\"><label class=\"ds-label\" for=\"ds-scope\">Edit proposed scope</label><textarea class=\"ds-field\" id=\"ds-scope\" maxlength=\"5000\" required>Review the proposed development scope.</textarea></div>",
+      "css": ".ds-editor{background:var(--panel,#1a2e43);color:var(--white,#eff4f8);padding:24px;font:14px/1.5 var(--body-font,\"Segoe UI\",system-ui,sans-serif)}.ds-label{display:block;margin-bottom:8px;font-weight:600}.ds-field{font:inherit;display:block;width:100%;min-width:0;min-height:150px;resize:vertical;margin-bottom:12px;border:1px solid var(--line,#395069);border-radius:4px;background:var(--field,#142538);color:var(--white,#eff4f8);padding:10px;caret-color:var(--amber,#f3c65c)}.ds-field::placeholder{color:var(--muted,#afbed0);opacity:1}.ds-field:focus-visible{outline:2px solid var(--amber,#f3c65c);outline-offset:3px}"
+    },
+    {
+      "name": "Workspace navigation",
+      "kind": "nav",
+      "description": "Current destination uses an amber label on a panel surface.",
+      "html": "<nav class=\"ds-nav\" aria-label=\"Workspace preview\"><button class=\"ds-nav-item\" type=\"button\" aria-current=\"page\">Operations</button><button class=\"ds-nav-item\" type=\"button\">Waiting</button></nav>",
+      "css": ".ds-nav{display:grid;gap:6px;background:var(--nav,#0d1825);padding:16px;font:14px/1.5 var(--body-font,\"Segoe UI\",system-ui,sans-serif)}.ds-nav-item{font:inherit;cursor:pointer;display:flex;align-items:center;gap:10px;width:100%;border:1px solid transparent;border-radius:4px;padding:10px 8px;min-height:40px;text-align:left;color:var(--white,#eff4f8);background:transparent;transition:background-color 160ms ease-out}.ds-nav-item:hover{background:var(--hover,#243d55)}.ds-nav-item:active{background:var(--panel,#1a2e43)}.ds-nav-item[aria-current=\"page\"]{background:var(--panel,#1a2e43);color:var(--amber,#f3c65c)}.ds-nav-item:focus-visible{outline:2px solid var(--amber,#f3c65c);outline-offset:3px}@media(prefers-reduced-motion:reduce){.ds-nav-item{transition:none}}"
+    },
+    {
+      "name": "Board filters",
+      "kind": "button",
+      "description": "Explicit pressed state with a restrained amber underline.",
+      "html": "<div class=\"ds-filters\" aria-label=\"Filter preview\"><button class=\"ds-filter\" type=\"button\" aria-pressed=\"true\">Needs your decision</button><button class=\"ds-filter\" type=\"button\" aria-pressed=\"false\">All active</button></div>",
+      "css": ".ds-filters{display:flex;gap:16px;border-bottom:1px solid var(--line,#395069);background:var(--ink,#101d2c);padding:16px 16px 0;font:14px/1.5 var(--body-font,\"Segoe UI\",system-ui,sans-serif)}.ds-filter{font:inherit;cursor:pointer;border:none;border-radius:0;padding:0 0 13px;min-height:40px;color:var(--muted,#afbed0);background:transparent;white-space:nowrap;transition:background-color 160ms ease-out}.ds-filter:hover{background:var(--hover,#243d55)}.ds-filter:active{background:var(--panel,#1a2e43)}.ds-filter[aria-pressed=\"true\"]{color:var(--amber,#f3c65c);box-shadow:0 2px 0 var(--amber,#f3c65c)}.ds-filter:focus-visible{outline:2px solid var(--amber,#f3c65c);outline-offset:3px}@media(prefers-reduced-motion:reduce){.ds-filter{transition:none}}"
+    },
+    {
+      "name": "Status badges",
+      "kind": "chip",
+      "description": "Static semantic states; explicit text remains the source of meaning.",
+      "html": "<div class=\"ds-stage\"><span class=\"ds-status ds-decision\">Decision due</span> <span class=\"ds-status ds-passed\">Passed</span> <span class=\"ds-status ds-unknown\">Outcome unknown</span> <span class=\"ds-status\">Waiting</span></div>",
+      "css": ".ds-stage{background:var(--ink,#101d2c);padding:16px;font:14px/1.5 var(--body-font,\"Segoe UI\",system-ui,sans-serif)}.ds-status{display:inline-block;font-size:11px;padding:2px 5px;border:1px solid var(--line,#395069);border-radius:3px;color:var(--muted,#afbed0)}.ds-decision{color:var(--amber,#f3c65c);border-color:#71603b}.ds-passed{color:var(--teal,#7ad6bc);border-color:#3b695f}.ds-unknown{color:var(--red,#ff9a91);border-color:#805652}"
+    },
+    {
+      "name": "Scope container",
+      "kind": "card",
+      "description": "Flat, bordered reading surface for proposed scope or exact reply text.",
+      "html": "<div class=\"ds-stage\"><div class=\"ds-scope\"><p class=\"ds-copy\">Development work only; production remains a separate manual handoff.</p></div></div>",
+      "css": ".ds-stage{background:var(--panel,#1a2e43);padding:24px;font:14px/1.5 var(--body-font,\"Segoe UI\",system-ui,sans-serif)}.ds-scope{padding:14px;margin-top:8px;border:1px solid var(--line,#395069);background:var(--field,#142538);border-radius:4px}.ds-copy{margin:0;max-width:70ch;color:var(--white,#eff4f8);font-size:13px;line-height:1.7}"
+    }
+  ],
+  "narrative": {
+    "northStar": "Airport operating board and review desk",
+    "overview": "ACP uses aligned request rows, named checkpoints and a quiet adjacent review workspace to support careful decisions. Restrained operational signals establish hierarchy while literal labels explain the action and its limits.\n\nThis records the isolated HTML/CSS/JavaScript prototype in `prototypes/operations/`. It is a prototype-recorded candidate awaiting David's usability acceptance. All records and transitions are synthetic; this document does not establish the production interface or live integration behavior.",
+    "keyCharacteristics": [
+      "Dense comparison beside readable decision context.",
+      "Navy surfaces with restrained amber, teal and red signals.",
+      "Literal actions, visible uncertainty and explicit sample provenance."
+    ],
+    "rules": [
+      {
+        "name": "The Explicit State Rule",
+        "body": "Status text carries the meaning; color reinforces it.",
+        "section": "colors"
+      }
+    ],
+    "dos": [
+      "Do pair every status color with explicit text.",
+      "Do keep checkpoint, final outcome and next owner distinguishable.",
+      "Do retain action scope, recipients where relevant, and verification limits in the review.",
+      "Do identify authored sample data and simulated actions visibly.",
+      "Do preserve visible keyboard focus and readable narrow-screen review context."
+    ],
+    "donts": [
+      "Don't depict a click as proof of execution or verification.",
+      "Don't introduce decorative gradients, imagery or ambient motion into this working console.",
+      "Don't invent flight times, airport codes or operational progress.",
+      "Don't treat prototype measurements or styling as David's usability acceptance."
+    ]
+  }
+}

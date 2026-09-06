@@ -9,6 +9,7 @@ export * from "./lifecycle.ts";
 export * from "./node-context.ts";
 export * from "./profile-proposal.ts";
 export * from "./reconciliation.ts";
+export * from "./requests.ts";
 export * from "./readiness.ts";
 export * from "./runtime.ts";
 export * from "./validation.ts";
