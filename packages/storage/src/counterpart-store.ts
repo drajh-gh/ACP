@@ -10,7 +10,7 @@ import {
 import type { QueryResultRow } from "pg";
 
 import type { ConnectionPool, QueryExecutor } from "./database.ts";
-import { withTransaction } from "./database.ts";
+import { withIsolatedTransaction } from "./isolated-transaction.ts";
 import { counterpartMissionStatusSql } from "./counterpart-status-query.ts";
 import { getProjectReadiness as readProjectReadiness, type ProjectReadinessPersistence } from "./readiness-store.ts";
 import { getProjectProfileProposal as readProjectProfileProposal, getProfileConfirmationRequest as readProfileConfirmationRequest,
@@ -23,6 +23,7 @@ export interface CounterpartMissionCreate {
   readonly projectId: StableId<"project">;
   readonly objective: string;
   readonly requestedScope: string;
+  /** Legacy wire name for an exact canonical workflow ID, never a name alias. */
   readonly workflowKey?: string;
 }
 
@@ -132,13 +133,14 @@ export class PostgresCounterpartMissionStore
         : { workflowKey: normalized.workflowKey }),
     });
 
-    return withTransaction(this.pool, async (client) => {
+    return withIsolatedTransaction(this.pool, async (client) => {
       await client.query(
         "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
         [`acp:counterpart:${normalized.clientRequestId}`],
       );
       const prior = await client.query<RequestRow>(
-        `${missionProjectionSql}
+        `SELECT ${missionProjectionColumns}, request.request_digest
+         FROM acp.missions AS mission
          JOIN acp.counterpart_mission_requests AS request
            ON request.mission_id = mission.mission_id
          WHERE request.client_request_id = $1`,
@@ -183,7 +185,7 @@ export class PostgresCounterpartMissionStore
              binding.retired_at IS NULL
              OR binding.retired_at > statement_timestamp()
            )
-           AND ($2::text IS NULL OR workflow.workflow_key = $2)
+           AND ($2::text IS NULL OR workflow.workflow_id::text = $2::text)
          ORDER BY binding.active_from DESC, binding.binding_id
          FOR SHARE OF binding, provenance`,
         [
@@ -346,10 +348,11 @@ export class PostgresCounterpartMissionStore
   }
 }
 
-const missionProjectionSql = `SELECT mission.mission_id, mission.project_id,
+const missionProjectionColumns = `mission.mission_id, mission.project_id,
   mission.state, mission.requested_scope, mission.workflow_id,
   mission.workflow_version, mission.completion_contract_id,
-  mission.completion_contract_version, mission.created_at, mission.updated_at
+  mission.completion_contract_version, mission.created_at, mission.updated_at`;
+const missionProjectionSql = `SELECT ${missionProjectionColumns}
 FROM acp.missions AS mission`;
 
 function normalizeCreation(input: CounterpartMissionCreate): CounterpartMissionCreate {
@@ -366,7 +369,7 @@ function normalizeCreation(input: CounterpartMissionCreate): CounterpartMissionC
   );
   const workflowKey = input.workflowKey === undefined
     ? undefined
-    : boundedText(input.workflowKey, "workflow key", 200);
+    : parseStableId(input.workflowKey, "workflow");
   return {
     clientRequestId,
     projectId: parseStableId(input.projectId, "project"),

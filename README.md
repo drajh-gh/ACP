@@ -148,6 +148,8 @@ pwsh -NoProfile -File scripts/check-postgres.ps1 -MigrationSessions
 pwsh -NoProfile -File scripts/check-postgres.ps1 -CounterpartStatus core
 pwsh -NoProfile -File scripts/check-postgres.ps1 -CounterpartStatus limits
 pwsh -NoProfile -File scripts/check-postgres.ps1 -CounterpartStatus snapshot
+pwsh -NoProfile -File scripts/check-postgres.ps1 -CounterpartSessions core
+pwsh -NoProfile -File scripts/check-postgres.ps1 -CounterpartSessions races
 pwsh -NoProfile -File scripts/check-postgres.ps1 -ProvisionerPlans core
 pwsh -NoProfile -File scripts/check-postgres.ps1 -ProvisionerPlans races
 pwsh -NoProfile -File scripts/check-postgres.ps1 -ProvisionerPlans expiry
@@ -262,6 +264,13 @@ without starting workers. They verify independent recorded state, malformed and
 over-limit denial, historical access, and one-snapshot consistency across a
 concurrent commit. They do not assess live freshness or authorize execution.
 See [the status contract](docs/architecture/0016-recorded-counterpart-status.md).
+The separate `CounterpartSessions` core/races phases test actual mission creation,
+identical/divergent replay, backend loss, lost transaction responses and concurrent
+request serialization using the seeded schema through 0005. They do not execute
+a workflow or external effect. The optional MCP `workflowKey` is a legacy name
+for an exact canonical `wfl_…` workflow ID, not a friendly-name alias; the existing
+authoritative binding still pins its version. See
+[the mission creation session contract](docs/architecture/0034-counterpart-mission-creation-sessions.md).
 The standalone `ProvisionerPlans` phases apply seeded PostgreSQL through 0016
 and test inert immutable attempt plans, expiry/race denial, history-preserving
 downgrade and predecessor target holds. Directory identities and paths are

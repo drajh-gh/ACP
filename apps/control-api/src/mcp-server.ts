@@ -89,7 +89,7 @@ export function createCounterpartMcpServer(
         projectId: stableId("prj"),
         objective: z.string().trim().min(1).max(4_000),
         requestedScope: z.string().trim().min(1).max(4_000),
-        workflowKey: z.string().trim().min(1).max(200).optional(),
+        workflowKey: stableId("wfl").describe("Legacy-named exact workflow definition ID (wfl_…), not a name alias. The authoritative binding pins its version.").optional(),
       },
       outputSchema: {
         mission: missionProjectionSchema,
@@ -110,7 +110,7 @@ export function createCounterpartMcpServer(
         requestedScope: input.requestedScope,
         ...(input.workflowKey === undefined
           ? {}
-          : { workflowKey: input.workflowKey }),
+          : { workflowKey: parseStableId(input.workflowKey, "workflow") }),
       });
       return missionResult(
         created,

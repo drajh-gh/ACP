@@ -185,6 +185,17 @@ describe("authenticated counterpart MCP", () => {
       assert.equal(persistence.creations.length, 1);
       assert.equal("lifecycle" in (created.structuredContent as { mission:object }).mission,false);
 
+      const workflowId=persistence.mission.workflowId;
+      for(const workflowKey of ["WF-ENG",null,"wfl_123",workflowId.toUpperCase()," "+workflowId,workflowId+"\n"]){
+        const denied=await client.callTool({name:"create_mission",arguments:{clientRequestId:"invalid-selector",projectId:persistence.mission.projectId,
+          objective:"A synthetic request.",requestedScope:"Diagnosis only.",workflowKey}});
+        assert.equal(denied.isError,true);assert.equal(denied.structuredContent,undefined);
+        assert.equal(persistence.creations.length,1,"invalid legacy workflow selector never reaches persistence");
+      }
+      const selected=await client.callTool({name:"create_mission",arguments:{clientRequestId:"exact-selector",projectId:persistence.mission.projectId,
+        objective:"A synthetic request.",requestedScope:"Diagnosis only.",workflowKey:workflowId}});
+      assert.notEqual(selected.isError,true);assert.equal(persistence.creations.length,2);assert.equal(persistence.creations[1]?.workflowKey,workflowId);
+
       const status = await client.callTool({
         name: "get_mission_status",
         arguments: { missionId: persistence.mission.missionId },

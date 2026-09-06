@@ -15,6 +15,8 @@ param(
   [string]$WorktreeReservations,
   [ValidateSet('core', 'limits', 'snapshot')]
   [string]$CounterpartStatus,
+  [ValidateSet('core', 'races')]
+  [string]$CounterpartSessions,
   [ValidateSet('core', 'races', 'expiry', 'upgrade', 'regression')]
   [string]$ProvisionerPlans,
   [ValidateSet('core', 'races', 'expiry', 'upgrade', 'regression')]
@@ -36,6 +38,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+if ($CounterpartSessions -and ($LifecycleOnly -or $HostOnly -or $LaunchRecovery -or $LaunchNative -or $FilesystemBindings -or $RepositoryBindingOnly -or $FilesystemNative -or $FilesystemLeases -or $FilesystemLeaseNative -or $FilesystemLeaseChannelNative -or $WorktreeReservations -or $MigrationSessions -or $CounterpartStatus -or $ProvisionerPlans -or $ProvisionerJournal -or $ProvisionerAdmissions -or $NativeRootClaims -or $Readiness -or $ProfileProposals)) { throw 'CounterpartSessions is a standalone bounded gate' }
 if ($ProvisionerAdmissions -and ($LifecycleOnly -or $HostOnly -or $LaunchRecovery -or $LaunchNative -or $FilesystemBindings -or $RepositoryBindingOnly -or $FilesystemNative -or $FilesystemLeases -or $FilesystemLeaseNative -or $FilesystemLeaseChannelNative -or $WorktreeReservations -or $MigrationSessions -or $CounterpartStatus -or $ProvisionerPlans -or $ProvisionerJournal -or $NativeRootClaims -or $Readiness -or $ProfileProposals)) { throw 'ProvisionerAdmissions is a standalone bounded gate' }
 if ($NativeRootClaims -and ($LifecycleOnly -or $HostOnly -or $LaunchRecovery -or $LaunchNative -or $FilesystemBindings -or $RepositoryBindingOnly -or $FilesystemNative -or $FilesystemLeases -or $FilesystemLeaseNative -or $FilesystemLeaseChannelNative -or $WorktreeReservations -or $MigrationSessions -or $CounterpartStatus -or $ProvisionerPlans -or $ProvisionerJournal -or $Readiness -or $ProfileProposals)) { throw 'NativeRootClaims is a standalone bounded gate' }
 if ($ProvisionerJournal -and ($LifecycleOnly -or $HostOnly -or $LaunchRecovery -or $LaunchNative -or $FilesystemBindings -or $RepositoryBindingOnly -or $FilesystemNative -or $FilesystemLeases -or $FilesystemLeaseNative -or $FilesystemLeaseChannelNative -or $WorktreeReservations -or $MigrationSessions -or $CounterpartStatus -or $ProvisionerPlans -or $Readiness -or $ProfileProposals)) { throw 'ProvisionerJournal is a standalone bounded gate' }
@@ -132,6 +135,7 @@ if (-not $Internal) {
   if ($FilesystemLeaseChannelNative) { $commandLine += ' -FilesystemLeaseChannelNative ' + $FilesystemLeaseChannelNative }
   if ($WorktreeReservations) { $commandLine += ' -WorktreeReservations ' + $WorktreeReservations }
   if ($CounterpartStatus) { $commandLine += ' -CounterpartStatus ' + $CounterpartStatus }
+  if ($CounterpartSessions) { $commandLine += ' -CounterpartSessions ' + $CounterpartSessions }
   if ($ProvisionerPlans) { $commandLine += ' -ProvisionerPlans ' + $ProvisionerPlans }
   if ($ProvisionerJournal) { $commandLine += ' -ProvisionerJournal ' + $ProvisionerJournal }
   if ($ProvisionerAdmissions) { $commandLine += ' -ProvisionerAdmissions ' + $ProvisionerAdmissions }
@@ -374,6 +378,11 @@ try {
       if ($checkProcess.ExitCode -ne 0) { throw "$Label failed" }
     }
     finally { $checkProcess.Dispose() }
+  }
+  if ($CounterpartSessions) {
+    Invoke-AcpNodeCheck 'packages/storage/test/integration/counterpart-sessions.ts' 'Counterpart mission session integration' $CounterpartSessions -TimeoutSeconds 30
+    Write-Host 'Focused counterpart mission session phase passed; no workflow or external effect was executed.'
+    return
   }
   if ($MigrationSessions) {
     Invoke-AcpNodeCheck 'packages/storage/test/integration/migration-sessions.ts' 'Migration session integration' -TimeoutSeconds 30
