@@ -37,3 +37,12 @@ explain how its fixed technology choices shape the repository.
 | [0025](0025-fresh-provisioner-admission.md) | Atomic fresh-only provisioner admission |
 | [0026](0026-private-provisioner-controller.md) | Private one-shot provisioner controller |
 | [0027](0027-native-provisioner-admission.md) | Native one-shot provisioner admission |
+| [0028](0028-native-provisioner-bridge.md) | Private native provisioner bridge |
+| [0029](0029-private-provisioner-channel.md) | Exact private provisioner channel |
+| [0030](0030-owned-provisioner-process-runner.md) | Owned provisioner process runner |
+| [0031](0031-stored-plan-provisioner-executor.md) | Stored-plan provisioner executor |
+| [0032](0032-provisioner-binding-identity-pins.md) | Original provisioner binding pins |
+| [0033](0033-provisioner-bridge-binding-lifetime.md) | Provisioner bridge binding lifetime |
+| [0034](0034-counterpart-mission-creation-sessions.md) | Isolated counterpart creation sessions |
+| [0035](0035-counterpart-mission-response-boundary.md) | Bounded mission responses and uncertain creation |
+| [0036](0036-stopped-provisioner-worktree-observation.md) | Read-only stopped worktree observation |

@@ -1,4 +1,4 @@
-param([switch]$Internal, [ValidateSet('supervision', 'launch-fence', 'provisioner-fence', 'provisioner-admission', 'provisioner-bridge', 'provisioner-runner', 'provisioner-pins', 'filesystem', 'filesystem-pins', 'provisioner-observation', 'lease-watchdog', 'lease-liveness', 'lease-bootstrap', 'lease-channel', 'lease-channel-liveness')][string]$Suite = 'supervision', [string]$TestNamePattern, [string]$OwnedFixtureRun)
+param([switch]$Internal, [ValidateSet('supervision', 'launch-fence', 'provisioner-fence', 'provisioner-admission', 'provisioner-bridge', 'provisioner-runner', 'provisioner-pins', 'filesystem', 'filesystem-pins', 'provisioner-observation', 'provisioner-verification', 'lease-watchdog', 'lease-liveness', 'lease-bootstrap', 'lease-channel', 'lease-channel-liveness')][string]$Suite = 'supervision', [string]$TestNamePattern, [string]$OwnedFixtureRun)
 $ErrorActionPreference = 'Stop'
 if ($Suite -eq 'provisioner-observation' -and -not $TestNamePattern) { throw 'Select a bounded provisioner observation phase with -TestNamePattern; see README.' }
 if ($Suite -eq 'provisioner-fence' -and $TestNamePattern -notin @('^provisioner core:', '^provisioner safety:')) { throw 'Select an exact bounded provisioner fence core or safety phase; see README.' }
@@ -6,6 +6,7 @@ if ($Suite -eq 'provisioner-admission' -and $TestNamePattern -notin @('^provisio
 if ($Suite -eq 'provisioner-bridge' -and $TestNamePattern -notin @('^provisioner bridge core:', '^provisioner bridge ack-owner:', '^provisioner bridge ack-plan:', '^provisioner bridge ack-root:', '^provisioner bridge ack-fence:', '^provisioner bridge framing:', '^provisioner bridge safety:', '^provisioner bridge loss:', '^provisioner bridge bindings:', '^provisioner bridge bindings-schema:', '^provisioner bridge bindings-identity:')) { throw 'Select an exact bounded provisioner bridge phase; see README.' }
 if ($Suite -eq 'provisioner-runner' -and $TestNamePattern -notin @('^provisioner runner core:', '^provisioner runner loss:', '^provisioner runner expiry:')) { throw 'Select an exact bounded provisioner runner phase; see README.' }
 if ($Suite -eq 'provisioner-pins' -and $TestNamePattern -notin @('^provisioner pins core:', '^provisioner pins rejection:')) { throw 'Select an exact bounded provisioner pins phase; see README.' }
+if ($Suite -eq 'provisioner-verification' -and $TestNamePattern -notin @('^poststop core:', '^poststop identity:', '^poststop metadata:', '^poststop composition:')) { throw 'Select an exact bounded post-stop verification phase; see README.' }
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'native-channel-fixture.ps1')
 if (-not $Internal) {
@@ -18,7 +19,7 @@ if (-not $Internal) {
   $fixtureRoot = $null
   $empty = $false
   try {
-    if ($Suite -in @('filesystem-pins', 'provisioner-observation', 'launch-fence', 'provisioner-fence', 'provisioner-bridge', 'provisioner-runner', 'provisioner-pins')) {
+    if ($Suite -in @('filesystem-pins', 'provisioner-observation', 'provisioner-verification', 'launch-fence', 'provisioner-fence', 'provisioner-bridge', 'provisioner-runner', 'provisioner-pins')) {
       $OwnedFixtureRun = [guid]::NewGuid().ToString('D')
       $pendingRoot = Get-AcpNativeChannelRoot $OwnedFixtureRun
       New-Item -ItemType Directory -Path $pendingRoot | Out-Null
@@ -47,7 +48,7 @@ if (-not $Internal) {
   exit 0
 }
 Set-Location -LiteralPath $repositoryRoot
-if ($Suite -in @('filesystem', 'provisioner-observation')) {
+if ($Suite -in @('filesystem', 'provisioner-observation', 'provisioner-verification')) {
   Add-Type -Path @('apps/worker/native/WindowsWorkerScope.cs', 'apps/worker/native/WindowsFilesystemReadLease.cs', 'apps/worker/native/WindowsRepositoryObserver.cs', 'apps/worker/native/WindowsWorkerJob.cs')
 } else { Add-Type -Path 'apps/worker/native/WindowsWorkerJob.cs' }
 $nodePath = (Get-Command node -CommandType Application | Select-Object -First 1).Source
@@ -56,9 +57,9 @@ $testInfo.UseShellExecute = $false
 $testInfo.CreateNoWindow = $true
 $testInfo.RedirectStandardOutput = $true
 $testInfo.RedirectStandardError = $true
-if ($Suite -in @('filesystem', 'filesystem-pins', 'provisioner-observation')) { $testInfo.Environment['ACP_TEST_GIT'] = (Get-Command git -CommandType Application | Select-Object -First 1).Source }
-if ($Suite -in @('filesystem-pins', 'provisioner-observation', 'launch-fence', 'provisioner-fence', 'provisioner-bridge', 'provisioner-runner', 'provisioner-pins')) { $testInfo.Environment['ACP_TEST_NATIVE_CHANNEL_ROOT'] = Get-AcpNativeChannelRoot $OwnedFixtureRun }
-if ($Suite -in @('provisioner-runner', 'provisioner-pins')) { $testInfo.Environment['ACP_TEST_PWSH'] = (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source }
+if ($Suite -in @('filesystem', 'filesystem-pins', 'provisioner-observation', 'provisioner-verification')) { $testInfo.Environment['ACP_TEST_GIT'] = (Get-Command git -CommandType Application | Select-Object -First 1).Source }
+if ($Suite -in @('filesystem-pins', 'provisioner-observation', 'provisioner-verification', 'launch-fence', 'provisioner-fence', 'provisioner-bridge', 'provisioner-runner', 'provisioner-pins')) { $testInfo.Environment['ACP_TEST_NATIVE_CHANNEL_ROOT'] = Get-AcpNativeChannelRoot $OwnedFixtureRun }
+if ($Suite -in @('provisioner-runner', 'provisioner-pins', 'provisioner-verification')) { $testInfo.Environment['ACP_TEST_PWSH'] = (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source }
 $testFile = switch ($Suite) {
   'launch-fence' { 'apps/worker/test/integration/windows-launch-fence.test.ts' }
   'provisioner-fence' { 'apps/worker/test/integration/windows-provisioner-fence.test.ts' }
@@ -69,6 +70,7 @@ $testFile = switch ($Suite) {
   'filesystem' { 'apps/worker/test/integration/windows-filesystem.test.ts' }
   'filesystem-pins' { 'apps/worker/test/integration/windows-linked-worktree-pins.test.ts' }
   'provisioner-observation' { 'apps/worker/test/integration/windows-provisioner-observation.test.ts' }
+  'provisioner-verification' { 'apps/worker/test/integration/windows-stopped-provisioner-worktree.test.ts' }
   'lease-watchdog' { 'apps/worker/test/integration/windows-lease-watchdog.test.ts' }
   'lease-liveness' { 'apps/worker/test/integration/windows-lease-watchdog.test.ts' }
   'lease-bootstrap' { 'apps/worker/test/integration/windows-lease-watchdog.test.ts' }

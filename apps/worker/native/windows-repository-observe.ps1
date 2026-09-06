@@ -19,6 +19,11 @@ try {
     if ($repository.machineFingerprint -cne $actual.MachineFingerprint) { throw 'Wrong machine' }
     $result = $observer.Worktree($repository.checkout.path,$repository.checkout.identity,$repository.commonGitDirectory.path,
       $repository.commonGitDirectory.identity,$request.workspace,$actual.MachineFingerprint)
+  } elseif ($request.operation -eq 'provisioner_worktree') {
+    $repository = $request.repository
+    if ($repository.machineFingerprint -cne $actual.MachineFingerprint) { throw 'Wrong machine' }
+    $result = $observer.StoppedProvisionerWorktree($repository.checkout.path,$repository.checkout.identity,$repository.commonGitDirectory.path,
+      $repository.commonGitDirectory.identity,$request.workspace,$request.parent.path,$request.parent.identity,$actual.MachineFingerprint)
   } elseif ($request.operation -eq 'provisioner_target') {
     $repository = $request.repository
     if ($repository.machineFingerprint -cne $actual.MachineFingerprint) { throw 'Wrong machine' }

@@ -186,6 +186,10 @@ pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite filesystem
 pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite filesystem-pins
 pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite provisioner-observation -TestNamePattern '^preflight (core|paths|branches):'
 pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite provisioner-observation -TestNamePattern '^preflight (metadata|limits|races|cancellation):'
+pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite provisioner-verification -TestNamePattern '^poststop core:'
+pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite provisioner-verification -TestNamePattern '^poststop identity:'
+pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite provisioner-verification -TestNamePattern '^poststop metadata:'
+pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite provisioner-verification -TestNamePattern '^poststop composition:'
 pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite lease-channel
 pwsh -NoProfile -File scripts/check-worker-supervision.ps1 -Suite lease-channel-liveness
 pwsh -NoProfile -File scripts/check-native-fixture-cleanup.ps1
@@ -353,6 +357,15 @@ Run the existing core, ack-owner, ack-plan, ack-root, ack-fence, framing, safety
 and loss phases separately as regressions. These remain synthetic and do not
 prove abrupt-exit ordering or restricted Git authority. See
 [the bridge binding lifetime](docs/architecture/0033-provisioner-bridge-binding-lifetime.md).
+The four exact `provisioner-verification` phases independently check stopped
+provisioner worktree metadata, including original parent identity, exact native/Git
+pointer topology, attached branch and full commit. The private verifier first
+requires retained rooted sealed-stop history, then returns bounded observation-only
+evidence. Its native composition uses synthetic database ports and a fixture-created
+worktree; it does not prove the echo capsule created it or authorize registration,
+hold conversion, release or writing. Historical replacement-reader and retired
+binding inspection do not grant fresh authority. See
+[stopped worktree observation](docs/architecture/0036-stopped-provisioner-worktree-observation.md).
 The three `FilesystemLeaseChannelNative` phases are focused, model-free real
 database/native lifecycle checks. Each applies the seeded schema through 0014,
 then runs only its selected scenario; predecessor suites remain separate gates.

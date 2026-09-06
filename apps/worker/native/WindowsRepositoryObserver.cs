@@ -36,38 +36,65 @@ public sealed class WindowsRepositoryObserver
     }
     public string Worktree(string checkoutPath, string checkoutIdentity, string commonPath, string commonIdentity,
         string workspacePath, string machine)
+        => JsonSerializer.Serialize(WorktreeObservation(checkoutPath,checkoutIdentity,commonPath,commonIdentity,workspacePath,machine,false,null));
+
+    public string StoppedProvisionerWorktree(string checkoutPath, string checkoutIdentity, string commonPath, string commonIdentity,
+        string workspacePath, string parentPath, string parentIdentity, string machine)
+    {
+        WindowsFilesystemReadLease.ValidatePath(workspacePath);
+        using var parent = WindowsFilesystemReadLease.Directory(parentPath);
+        if (parent.Path != parentPath || parent.Identity != parentIdentity || Path.GetDirectoryName(workspacePath) != parent.Path)
+            throw new InvalidOperationException("original provisioner parent changed");
+        return JsonSerializer.Serialize(WorktreeObservation(checkoutPath,checkoutIdentity,commonPath,commonIdentity,workspacePath,machine,true,parent));
+    }
+
+    private object WorktreeObservation(string checkoutPath, string checkoutIdentity, string commonPath, string commonIdentity,
+        string workspacePath, string machine, bool strict, WindowsFilesystemReadLease parent)
     {
         using var checkout = WindowsFilesystemReadLease.Directory(checkoutPath);
         using var common = WindowsFilesystemReadLease.Directory(commonPath);
-        if (checkout.Identity != checkoutIdentity || common.Identity != commonIdentity || !Equal(common.Path, Path.Combine(checkout.Path, ".git"))) throw new InvalidOperationException("repository binding changed");
+        if (checkout.Identity != checkoutIdentity || common.Identity != commonIdentity || !SamePath(common.Path,Path.Combine(checkout.Path,".git"),strict)
+            || (strict && (checkout.Path != checkoutPath || common.Path != commonPath || parent.Identity == checkout.Identity || parent.Identity == common.Identity)))
+            throw new InvalidOperationException("repository binding changed");
         using var configuration = common.PinFile("config");
         using var objectInfo = SupportedLayout(common,configuration);
         using var workspace = WindowsFilesystemReadLease.Directory(workspacePath);
         if (workspace.Identity == checkout.Identity || workspace.Identity == common.Identity
-            || Nested(workspace.Path,checkout.Path) || Nested(checkout.Path,workspace.Path)) throw new InvalidOperationException("isolated workspace required");
+            || Nested(workspace.Path,checkout.Path) || Nested(checkout.Path,workspace.Path)
+            || (strict && (workspace.Path != workspacePath || workspace.Identity == parent.Identity))) throw new InvalidOperationException("isolated workspace required");
         using var dotGit = workspace.PinFile(".git");
         string forward = Line(WindowsFilesystemReadLease.ReadText(dotGit));
         if (!forward.StartsWith("gitdir: ",StringComparison.Ordinal)) throw new InvalidOperationException("linked worktree pointer required");
         string metadataPath = Path.GetFullPath(forward.Substring(8),workspace.Path);
         string metadataParent = Path.Combine(common.Path,"worktrees");
-        if (!Equal(Path.GetDirectoryName(metadataPath),metadataParent)) throw new InvalidOperationException("exact linked metadata required");
+        if (!SamePath(Path.GetDirectoryName(metadataPath),metadataParent,strict)) throw new InvalidOperationException("exact linked metadata required");
         using var metadata = WindowsFilesystemReadLease.Directory(metadataPath);
+        if (strict && (metadata.Path != metadataPath || new[] {checkout.Identity,common.Identity,parent.Identity,workspace.Identity}.Contains(metadata.Identity)))
+            throw new InvalidOperationException("exact distinct worktree metadata required");
         metadata.RequireAbsent("config.worktree");
         using var reverse = metadata.PinFile("gitdir");
         using var commonPointer = metadata.PinFile("commondir");
         using var head = metadata.PinFile("HEAD");
-        if (!Equal(Path.GetFullPath(Line(WindowsFilesystemReadLease.ReadText(reverse)),metadata.Path),Path.Combine(workspace.Path,".git"))
-            || !Equal(Path.GetFullPath(Line(WindowsFilesystemReadLease.ReadText(commonPointer)),metadata.Path),common.Path)) throw new InvalidOperationException("worktree pointers disagree");
+        if (!SamePath(Path.GetFullPath(Line(WindowsFilesystemReadLease.ReadText(reverse)),metadata.Path),Path.Combine(workspace.Path,".git"),strict)
+            || !SamePath(Path.GetFullPath(Line(WindowsFilesystemReadLease.ReadText(commonPointer)),metadata.Path),common.Path,strict)) throw new InvalidOperationException("worktree pointers disagree");
         string symbolicHead = Line(WindowsFilesystemReadLease.ReadText(head));
         if (!symbolicHead.StartsWith("ref: refs/heads/",StringComparison.Ordinal)) throw new InvalidOperationException("attached worktree HEAD required");
         string branch = symbolicHead.Substring(5);
-        Topology(workspace,metadata,common);
-        if (Git(workspace.Path,"symbolic-ref","--quiet","HEAD") != branch) throw new InvalidOperationException("symbolic HEAD changed");
-        Git(workspace.Path,"check-ref-format",branch);
-        string revision = Git(workspace.Path,"rev-parse","--verify","--end-of-options","HEAD^{commit}");
+        Topology(workspace,metadata,common,strict,strict);
+        if (GitOutput(workspace.Path,strict,new[] {"symbolic-ref","--quiet","HEAD"}) != branch) throw new InvalidOperationException("symbolic HEAD changed");
+        string format = GitOutput(workspace.Path,strict,new[] {"check-ref-format",branch});
+        if (strict && format != "") throw new InvalidOperationException("unexpected ref validation output");
+        string revision = GitOutput(workspace.Path,strict,new[] {"rev-parse","--verify","--end-of-options","HEAD^{commit}"});
         if (!Regex.IsMatch(revision,"^[0-9a-f]{40}([0-9a-f]{24})?$")) throw new InvalidOperationException("full commit required");
-        return JsonSerializer.Serialize(new { state = "confirmed", kind = "worktree", machineFingerprint = machine,
-            workspace = Binding(workspace), gitDirectory = Binding(metadata), branchRef = branch, headRevision = revision, observedAt = Now() });
+        if (strict) {
+            ValidateBranch(branch);
+            if (DateTime.UtcNow >= deadline) throw new TimeoutException();
+            return new { state = "observed", kind = "provisioner_worktree", scope = "observation_only", machineFingerprint = machine,
+                checkout = Binding(checkout), commonGitDirectory = Binding(common), parent = Binding(parent),
+                workspace = Binding(workspace), gitDirectory = Binding(metadata), branchRef = branch, headRevision = revision, observedAt = Now() };
+        }
+        return new { state = "confirmed", kind = "worktree", machineFingerprint = machine,
+            workspace = Binding(workspace), gitDirectory = Binding(metadata), branchRef = branch, headRevision = revision, observedAt = Now() };
     }
     // Sequential first-discovery facts only. These handles are all released
     // before the caller receives an observation; this grants no Git authority.
@@ -148,16 +175,18 @@ public sealed class WindowsRepositoryObserver
         if (parts.Length > 16 || parts.Any(part => part.Length == 0 || part.StartsWith(".",StringComparison.Ordinal) || part.EndsWith(".lock",StringComparison.OrdinalIgnoreCase))) throw new ArgumentException("unsupported branch components");
         WindowsFilesystemReadLease.ValidatePath("C:\\"+string.Join("\\",parts));
     }
-    private void Topology(WindowsFilesystemReadLease workspace, WindowsFilesystemReadLease metadata, WindowsFilesystemReadLease common, bool strict = false)
+    private void Topology(WindowsFilesystemReadLease workspace, WindowsFilesystemReadLease metadata, WindowsFilesystemReadLease common, bool strict = false, bool ordinal = false)
     {
         string[] lines = GitOutput(workspace.Path,strict,new[] { "rev-parse","--path-format=absolute","--show-toplevel","--git-dir","--git-common-dir" }).Split('\n');
-        if (lines.Length != 3 || !Equal(lines[0],workspace.Path) || !Equal(lines[1],metadata.Path) || !Equal(lines[2],common.Path)) throw new InvalidOperationException("Git topology disagrees with native handles");
+        if (lines.Length != 3 || !SamePath(lines[0],workspace.Path,ordinal) || !SamePath(lines[1],metadata.Path,ordinal) || !SamePath(lines[2],common.Path,ordinal)) throw new InvalidOperationException("Git topology disagrees with native handles");
         using var reportedWorkspace = WindowsFilesystemReadLease.Directory(Path.GetFullPath(lines[0]));
         using var reportedMetadata = WindowsFilesystemReadLease.Directory(Path.GetFullPath(lines[1]));
         using var reportedCommon = WindowsFilesystemReadLease.Directory(Path.GetFullPath(lines[2]));
         if (reportedWorkspace.Identity != workspace.Identity || reportedMetadata.Identity != metadata.Identity || reportedCommon.Identity != common.Identity)
             throw new InvalidOperationException("Git topology native identities changed");
     }
+    private static bool SamePath(string left, string right, bool ordinal) => ordinal
+        ? string.Equals(Path.GetFullPath(left),Path.GetFullPath(right),StringComparison.Ordinal) : Equal(left,right);
     private static WindowsFilesystemReadLease SupportedLayout(WindowsFilesystemReadLease common,FileStream configuration)
     {
         // Intentionally narrow first layout. Parsing only an allowlist avoids

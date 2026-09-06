@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { win32 } from "node:path";
 import { parseWindowsDirectoryBinding, parseRepositoryBinding, type WindowsDirectoryBinding, type RepositoryBindingInput } from "@acp/storage";
 import { minimalCodexEnvironment } from "./codex-sdk-transport.ts";
+import { snapshotJsonData } from "@acp/domain";
 
 export interface WindowsRepositoryObserverOptions {
   /** Trusted host configuration, never a model-supplied executable or PATH search. */
@@ -18,6 +19,51 @@ export type WindowsWorktreeObservation = { readonly state: "unconfirmed" } | {
   readonly workspace: WindowsDirectoryBinding; readonly gitDirectory: WindowsDirectoryBinding;
   readonly branchRef: string; readonly headRevision: string; readonly observedAt: string;
 };
+export type WindowsStoppedProvisionerWorktreeObservation = { readonly state: "unconfirmed" } | {
+  readonly state: "observed"; readonly kind: "provisioner_worktree"; readonly scope: "observation_only";
+  readonly machineFingerprint: string; readonly checkout: WindowsDirectoryBinding; readonly commonGitDirectory: WindowsDirectoryBinding;
+  readonly parent: WindowsDirectoryBinding; readonly workspace: WindowsDirectoryBinding; readonly gitDirectory: WindowsDirectoryBinding;
+  readonly branchRef: string; readonly headRevision: string; readonly observedAt: string;
+};
+
+/** Exact sequential native metadata observations, never a creation/success receipt or retained lease. */
+export function parseWindowsStoppedProvisionerWorktreeObservation(value: unknown): WindowsStoppedProvisionerWorktreeObservation {
+  try {
+    const input = exact(snapshotJsonData(value, { maximumBytes: 32768 }), ["state", "kind", "scope", "machineFingerprint", "checkout",
+      "commonGitDirectory", "parent", "workspace", "gitDirectory", "branchRef", "headRevision", "observedAt"]);
+    if (input.state !== "observed" || input.kind !== "provisioner_worktree" || input.scope !== "observation_only"
+      || typeof input.observedAt !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(input.observedAt)
+      || !Number.isFinite(Date.parse(input.observedAt)) || new Date(input.observedAt).toISOString() !== input.observedAt) return { state: "unconfirmed" };
+    const checkout = parseWindowsDirectoryBinding(input.checkout), commonGitDirectory = parseWindowsDirectoryBinding(input.commonGitDirectory), parent = parseWindowsDirectoryBinding(input.parent);
+    const parsed = parseWindowsFilesystemObservation({ state: "confirmed", kind: "worktree", machineFingerprint: input.machineFingerprint,
+      workspace: input.workspace, gitDirectory: input.gitDirectory, branchRef: input.branchRef, headRevision: input.headRevision, observedAt: input.observedAt });
+    if (parsed.state !== "confirmed" || parsed.kind !== "worktree") return { state: "unconfirmed" };
+    const intent = parseWindowsProvisionerTargetInput({ workspacePath: parsed.workspace.path, branchRef: parsed.branchRef, baseRevision: parsed.headRevision });
+    if (win32.join(checkout.path, ".git") !== commonGitDirectory.path || win32.dirname(intent.workspacePath) !== parent.path
+      || win32.dirname(parsed.gitDirectory.path) !== win32.join(commonGitDirectory.path, "worktrees")
+      || overlaps(intent.workspacePath, checkout.path) || overlaps(intent.workspacePath, commonGitDirectory.path)
+      || new Set([checkout, commonGitDirectory, parent, parsed.workspace, parsed.gitDirectory].map(binding => binding.identity)).size !== 5) return { state: "unconfirmed" };
+    return { state: "observed", kind: "provisioner_worktree", scope: "observation_only", machineFingerprint: parsed.machineFingerprint,
+      checkout, commonGitDirectory, parent, workspace: parsed.workspace, gitDirectory: parsed.gitDirectory,
+      branchRef: parsed.branchRef, headRevision: parsed.headRevision, observedAt: parsed.observedAt };
+  } catch { return { state: "unconfirmed" }; }
+}
+
+/** Caller must establish the durable stopped-attempt prerequisite separately. This adapter only reads metadata. */
+export async function observeWindowsStoppedProvisionerWorktree(repository: RepositoryBindingInput, workspace: string,
+  expectedParent: WindowsDirectoryBinding, signal: AbortSignal, options: WindowsRepositoryObserverOptions): Promise<WindowsStoppedProvisionerWorktreeObservation> {
+  const binding = parseRepositoryBinding(snapshotJsonData(repository, { maximumBytes: 32768 }));
+  const parent = parseWindowsDirectoryBinding(snapshotJsonData(expectedParent, { maximumBytes: 16384 }));
+  validatePath(workspace); validateWindowsRepositoryObserverOptions(options);
+  if (win32.dirname(workspace) !== parent.path || overlaps(workspace, binding.checkout.path) || overlaps(workspace, binding.commonGitDirectory.path)) return { state: "unconfirmed" };
+  const result = parseWindowsStoppedProvisionerWorktreeObservation(await helper({ operation: "provisioner_worktree", repository: {
+    checkout: binding.checkout, commonGitDirectory: binding.commonGitDirectory, machineFingerprint: binding.machineFingerprint,
+  }, workspace, parent }, signal, options));
+  if (result.state !== "observed" || result.machineFingerprint !== binding.machineFingerprint || result.workspace.path !== workspace
+    || !sameBinding(result.parent, parent) || !sameBinding(result.checkout, binding.checkout) || !sameBinding(result.commonGitDirectory, binding.commonGitDirectory)) return { state: "unconfirmed" };
+  return result;
+}
+const sameBinding = (left: WindowsDirectoryBinding, right: WindowsDirectoryBinding) => left.path === right.path && left.identity === right.identity;
 export interface WindowsProvisionerTargetInput {
   readonly workspacePath:string;
   readonly branchRef:string;
