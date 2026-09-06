@@ -102,6 +102,30 @@ A future endpoint must authenticate a stable human principal, bind the exact vis
 candidate and recheck current facts. The existing shared bearer and effect approval
 envelopes do not supply that missing human-confirmation contract.
 
+## Read-only counterpart interface
+
+Control API and repository-source counterpart `0.3.0` expose exact
+`get_project_profile_proposal` and `get_profile_confirmation_request` reads.
+Each accepts only `projectId` and `proposalId`, delegates directly to one storage
+snapshot and reparses the complete response before MCP output validation. The
+wire request parser rebuilds its complete canonical document, checks the caller's
+expected scope and binds all nested data and digests. This proves self-consistency,
+not current database facts or human intent; current facts still come from storage.
+
+Strict output schemas retain all 62 field envelopes, complete nested proposals,
+safe evidence and inert authority literals. Recursive JSON schemas are descriptive
+supersets; the domain parser additionally enforces byte/depth/node/value semantics.
+Both tools have read-only, non-destructive, idempotent, closed-world annotations.
+All unavailable or rejected results collapse to one constant tool error without
+partial structured content or private diagnostics. Invalid selectors reject before
+persistence. No proposal writer or operator-confirmation endpoint is registered.
+
+The existing global trusted bearer boundary remains unchanged. It is neither
+per-project user authorization nor an authenticated human confirmation identity.
+Default client compatibility retains `0.1.0` and `0.2.0` and admits `0.3.0`; an
+explicit operator allowlist replaces the defaults in either direction. Updating
+source manifests and skills does not install or deploy them.
+
 ## Preservation and verification
 
 An empty 0018 downgrade removes only its tables/functions. A populated downgrade
@@ -109,4 +133,7 @@ refuses to discard proposal or pin history. Earlier migrations and runtime table
 are left intact. Focused `ProfileProposals` phases run against disposable seeded
 PostgreSQL with bounded owned processes; they never call a model or live provider.
 The `regression` phase runs existing readiness core and read-only HTTP checks under
-0018. Native worker/provisioner paths are unchanged.
+0018. The `http` phase exercises both new read tools over loopback with an actual
+SELECT-only database role, including full nonempty evidence, large escaped JSON,
+identity/freshness/disclosure drift, supersession, target publication and exact-
+numeric whole denial. Native worker/provisioner paths are unchanged.

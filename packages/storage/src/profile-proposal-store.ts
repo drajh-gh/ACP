@@ -1,8 +1,8 @@
 import {
   buildProfileConfirmationRequest, canonicalJsonDigest, expectJsonValue, expectOnlyKeys, expectRecord,
-  parseProfileProposalIdentity, parseProfileProposalProducer, parseProjectProfileProposal, parseStableId,
+  parseProfileProposalIdentity, parseProfileProposalProducer, parseProjectProfileProposal, parseProjectProfileProposalQuery,
   prepareProfileProposalFields, profileProposalMaximumBytes,
-  type ProfileProposalIdentity, type ProfileProposalProducer, type ProjectProfileProposal,
+  type ProfileProposalIdentity, type ProfileProposalProducer, type ProjectProfileProposal, type ProjectProfileProposalQuery, type ProfileConfirmationRequest,
 } from "@acp/domain";
 import type { Pool, QueryResult, QueryResultRow } from "pg";
 import type { QueryExecutor } from "./database.ts";
@@ -10,6 +10,11 @@ import { projectProfileProposalSql } from "./profile-proposal-query.ts";
 import { parseExactProfileJson } from "./profile-proposal-json.ts";
 
 export interface ProfileProposalWrite extends ProfileProposalIdentity { readonly fields: unknown }
+/** Recorded proposal and review-request reads only. No producer, confirmation, publication or activation methods. */
+export interface ProjectProfileProposalPersistence {
+  getProjectProfileProposal(query: ProjectProfileProposalQuery): Promise<ProjectProfileProposal | undefined>;
+  getProfileConfirmationRequest(query: ProjectProfileProposalQuery): Promise<ProfileConfirmationRequest | undefined>;
+}
 const unavailable = "Profile proposal is unavailable; no partial snapshot returned.";
 const requestUnavailable = "Profile confirmation request is unavailable; no partial request returned.";
 const storageMaximumBytes = profileProposalMaximumBytes * 2;
@@ -98,9 +103,7 @@ export async function getProfileConfirmationRequest(executor: QueryExecutor, que
 }
 
 async function snapshot(executor: QueryExecutor, value: unknown) {
-  const input = expectRecord(value, "exact profile proposal query");
-  expectOnlyKeys(input, ["projectId", "proposalId"], "exact profile proposal query");
-  const projectId = parseStableId(input.projectId, "project"), proposalId = parseStableId(input.proposalId, "projectProfileProposal");
+  const { projectId, proposalId } = parseProjectProfileProposalQuery(value);
   const row = (await executor.query(projectProfileProposalSql, [projectId,proposalId,storageMaximumBytes])).rows[0];
   if (!row) return undefined;
   if (row.proposal_error !== null) throw new Error(unavailable);

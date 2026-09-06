@@ -5,6 +5,7 @@ import {
   type MissionState,
   type StableId,
   type ProjectReadinessQuery,
+  type ProjectProfileProposalQuery,
 } from "@acp/domain";
 import type { QueryResultRow } from "pg";
 
@@ -12,6 +13,8 @@ import type { ConnectionPool, QueryExecutor } from "./database.ts";
 import { withTransaction } from "./database.ts";
 import { counterpartMissionStatusSql } from "./counterpart-status-query.ts";
 import { getProjectReadiness as readProjectReadiness, type ProjectReadinessPersistence } from "./readiness-store.ts";
+import { getProjectProfileProposal as readProjectProfileProposal, getProfileConfirmationRequest as readProfileConfirmationRequest,
+  type ProjectProfileProposalPersistence } from "./profile-proposal-store.ts";
 import { counterpartStatusCollectionLimit,counterpartStatusEnvironmentLimit,counterpartStatusMaximumBytes,
   parseCounterpartMissionStatus,type CounterpartMissionStatus } from "./counterpart-status.ts";
 
@@ -53,7 +56,7 @@ export interface CounterpartMissionCreation {
 export interface CounterpartMissionSummary
   extends Omit<CounterpartMissionProjection, "nodes"> {}
 
-export interface CounterpartMissionPersistence extends ProjectReadinessPersistence {
+export interface CounterpartMissionPersistence extends ProjectReadinessPersistence, ProjectProfileProposalPersistence {
   createMission(input: CounterpartMissionCreate): Promise<CounterpartMissionCreation>;
   getMission(
     missionId: StableId<"mission">,
@@ -334,6 +337,12 @@ export class PostgresCounterpartMissionStore
 
   async getProjectReadiness(query: ProjectReadinessQuery) {
     return readProjectReadiness(this.pool, query);
+  }
+  async getProjectProfileProposal(query: ProjectProfileProposalQuery) {
+    return readProjectProfileProposal(this.pool, query);
+  }
+  async getProfileConfirmationRequest(query: ProjectProfileProposalQuery) {
+    return readProfileConfirmationRequest(this.pool, query);
   }
 }
 

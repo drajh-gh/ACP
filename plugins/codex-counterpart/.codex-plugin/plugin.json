@@ -1,7 +1,7 @@
 {
   "name": "codex-counterpart",
-  "version": "0.2.0",
-  "description": "Create and inspect durable ACP missions and read independent recorded project readiness from Codex.",
+  "version": "0.3.0",
+  "description": "Create and inspect ACP missions, recorded readiness, and inert project profile review documents from Codex.",
   "author": {
     "name": "ACP"
   },
@@ -9,14 +9,14 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "ACP Counterpart",
-    "shortDescription": "Inspect ACP missions and recorded readiness.",
-    "longDescription": "Turns explicit objectives into durable, policy-governed ACP missions, reports independent lifecycle projections, and reads exact recorded capability readiness without granting authority.",
+    "shortDescription": "Inspect ACP missions, readiness and profile drafts.",
+    "longDescription": "Creates durable ACP missions, reports independent lifecycle projections, and reads recorded readiness and complete profile review documents without confirming, publishing, activating or granting authority.",
     "developerName": "ACP",
     "category": "Productivity",
     "capabilities": ["Interactive", "Write"],
     "defaultPrompt": [
       "Create an ACP mission for this objective.",
-      "Show the current status of this ACP mission.",
+      "Read this exact ACP profile proposal and its complete review request.",
       "Read recorded readiness for these exact project profile and capability keys."
     ]
   },

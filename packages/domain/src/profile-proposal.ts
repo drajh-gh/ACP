@@ -59,6 +59,10 @@ export interface ProfileProposalMetadata {
 }
 export type ProfileProposalIdentity = Omit<ProfileProposalMetadata, "producer" | "proposedAt">;
 export type ProfileProposalProducer = ProfileProposalMetadata["producer"];
+export interface ProjectProfileProposalQuery {
+  readonly projectId: StableId<"project">;
+  readonly proposalId: StableId<"projectProfileProposal">;
+}
 const authority = { assessment: "not_evaluated", publication: "not_authorized", activation: "not_authorized" } as const;
 export interface ProjectProfileProposal extends ProfileProposalMetadata {
   readonly proposalSchemaVersion: typeof profileProposalSchemaVersion;
@@ -73,6 +77,12 @@ const metadataFields = ["proposalId", "projectId", "candidateProfile", "baseProf
 const proposalFields = [...metadataFields, "proposalSchemaVersion", "fields", "evidencePins", "state", "authority", "proposalDigest"];
 const invalidProposal = "Invalid or undisclosable profile proposal.";
 const unavailableRequest = "Profile confirmation request is unavailable; no partial request returned.";
+
+export function parseProjectProfileProposalQuery(value: unknown): ProjectProfileProposalQuery {
+  const input = expectRecord(value, "exact profile proposal query");
+  expectOnlyKeys(input, ["projectId", "proposalId"], "exact profile proposal query");
+  return { projectId: parseStableId(input.projectId, "project"), proposalId: parseStableId(input.proposalId, "projectProfileProposal") };
+}
 
 /** Pure assembly from selected, already-redacted discovery results; it performs no discovery I/O or authorization. */
 export function buildProjectProfileProposal(metadataValue: unknown, discoveredFields: unknown, evidencePinsValue: unknown): ProjectProfileProposal {
@@ -147,6 +157,22 @@ export function buildProfileConfirmationRequest(proposalValue: unknown, currentS
     const result = { ...body, confirmationDigest: digest(body) };
     assertSize(result, profileProposalMaximumBytes * 2);
     return result;
+  } catch { throw new Error(unavailableRequest); }
+}
+
+export type ProfileConfirmationRequest = ReturnType<typeof buildProfileConfirmationRequest>;
+
+/** Wire self-consistency only: this parser cannot establish current database facts or human intent. */
+export function parseProfileConfirmationRequest(value: unknown, expectedQueryValue: unknown): ProfileConfirmationRequest {
+  try {
+    assertSize(value, profileProposalMaximumBytes * 2);
+    const expected = parseProjectProfileProposalQuery(expectedQueryValue), input = expectRecord(value, "profile confirmation request");
+    expectOnlyKeys(input, ["requestSchemaVersion", "kind", "proposalId", "projectId", "candidateProfile", "proposalDigest", "evidenceSnapshotDigest",
+      "asOf", "proposal", "evidence", "authorityAssessment", "activation", "confirmationDigest"], "profile confirmation request");
+    const rebuilt = buildProfileConfirmationRequest(input.proposal, { currentProposalId: expected.proposalId,
+      candidateProfileExists: false, baseProfileMatches: true, asOf: input.asOf, evidence: input.evidence });
+    if (rebuilt.projectId !== expected.projectId || rebuilt.proposalId !== expected.proposalId || digest(input) !== digest(rebuilt)) throw new Error(unavailableRequest);
+    return rebuilt;
   } catch { throw new Error(unavailableRequest); }
 }
 

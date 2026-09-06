@@ -29,6 +29,8 @@ function fixture() {
   }], assessments.map(row => ({ assessmentId: row.assessmentId, matches: true })));
   let reads = 0, mutations = 0;
   const persistence: CounterpartMissionPersistence = {
+    async getProjectProfileProposal() { throw new Error("unexpected profile proposal read"); },
+    async getProfileConfirmationRequest() { throw new Error("unexpected profile request read"); },
     async getProjectReadiness(input: ProjectReadinessQuery) { reads++; assert.deepEqual(input, query); return readiness; },
     async createMission() { mutations++; throw new Error("unexpected mutation"); },
     async getMission() { throw new Error("unexpected mission read"); },
@@ -57,9 +59,9 @@ async function withClient(action: (client: Client, data: ReturnType<typeof fixtu
 }
 
 describe("recorded readiness MCP", () => {
-  for (const pluginVersion of ["0.1.0", "0.2.0"]) it(`serves seven independent schema-2 states to compatible plugin ${pluginVersion}`, async () => {
+  for (const pluginVersion of ["0.1.0", "0.2.0", "0.3.0"]) it(`serves seven independent schema-2 states to compatible plugin ${pluginVersion}`, async () => {
     await withClient(async (client, data) => {
-      assert.deepEqual(client.getServerVersion(), { name: "acp-control", version: "0.2.0" });
+      assert.deepEqual(client.getServerVersion(), { name: "acp-control", version: "0.3.0" });
       const tool = (await client.listTools()).tools.find(tool => tool.name === "get_project_readiness");
       assert.ok(tool);
       assert.deepEqual(tool.annotations, { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
@@ -81,13 +83,13 @@ describe("recorded readiness MCP", () => {
       error instanceof Error && "code" in error && error.code === 426);
   });
 
-  it("keeps the source plugin feature version, header and four-tool allowlist aligned", async () => {
+  it("keeps the source plugin feature version, header and six-tool allowlist aligned", async () => {
     const manifest = JSON.parse(await readFile(new URL("../../../plugins/codex-counterpart/.codex-plugin/plugin.json", import.meta.url), "utf8"));
     const mcp = JSON.parse(await readFile(new URL("../../../plugins/codex-counterpart/.mcp.json", import.meta.url), "utf8"));
-    assert.equal(manifest.version, "0.2.0");
+    assert.equal(manifest.version, "0.3.0");
     assert.equal(mcp.mcpServers["acp-control"].http_headers["X-ACP-Plugin-Version"], manifest.version);
     assert.deepEqual(mcp.mcpServers["acp-control"].enabled_tools.slice().sort(), [
-      "create_mission", "get_mission_status", "get_project_readiness", "list_active_missions",
+      "create_mission", "get_mission_status", "get_profile_confirmation_request", "get_project_profile_proposal", "get_project_readiness", "list_active_missions",
     ]);
   });
 
@@ -144,7 +146,7 @@ describe("recorded readiness MCP", () => {
       await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
       const port = (server.address() as AddressInfo).port;
       const health = await fetch(`http://127.0.0.1:${port}/healthz`);
-      assert.equal(health.status, 200); assert.deepEqual(await health.json(), { status: "ok", version: "0.2.0" });
+      assert.equal(health.status, 200); assert.deepEqual(await health.json(), { status: "ok", version: "0.3.0" });
       const response = await fetch(`http://127.0.0.1:${port}/mcp`, { method: "POST", headers: {
         "Content-Type": "application/json", "X-ACP-Plugin-Version": "0.2.0",
       }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "get_project_readiness", arguments: data.query } }) });
