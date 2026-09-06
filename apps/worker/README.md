@@ -351,6 +351,21 @@ technical operation/resource enforcement from these observations.
 
 ## Verification
 
+### Private provisioner session channel
+
+`WindowsProvisionerChannel` strictly decodes the raw bridge protocol and binds
+READY, acceptance and rooted closure to one original owner/plan. Its internal
+failure signal must be combined with caller cancellation in the controller.
+Provisional terminal messages initiate bounded transport drain without further
+wire commands; only actual process/pipe close can settle the session. The pure
+channel has synthetic controller tests, not an enabled process wrapper or stored-
+plan executor. See [ADR0029](../../docs/architecture/0029-private-provisioner-channel.md).
+
+The normal local test suite includes the channel, shared strict JSON parser,
+unchanged manifest-discovery regressions and exact admission controller. Their
+in-memory physical-close calls do not prove real Windows bridge cleanup; the
+next process-wrapper integration must supply and test that independent bound.
+
 ### Private raw native provisioner bridge
 
 The dedicated bridge integrates original-plan/owner ACK validation with the

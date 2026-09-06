@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { expectOnlyKeys, expectRecord, parseStableId, reduceProfileDiscoveryObservations,
   type ProfileDiscoveryObservation, type StableId } from "@acp/domain";
-import { copyNpmManifestBytes } from "./npm-manifest-bytes.ts";
+import { copyNpmManifestBytes,npmManifestMaximumBytes } from "./npm-manifest-bytes.ts";
+import { parseBoundedJson } from "./bounded-json.ts";
 export { npmManifestMaximumBytes } from "./npm-manifest-bytes.ts";
 
 export interface NpmManifestDiscoveryInput {
@@ -28,7 +29,7 @@ export function discoverNpmPackageManifest(value: unknown): NpmManifestDiscovery
     const contentHash = hash(bytes);
     if (contentHash !== input.expectedContentHash) throw new Error("manifest content changed");
     const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
-    const manifest = expectRecord(parseBoundedManifestJson(text), "npm package manifest");
+    const manifest = expectRecord(parseBoundedJson(text,{maximumBytes:npmManifestMaximumBytes,maximumDepth:32,maximumNodes:10000}), "npm package manifest");
     const scripts = Object.hasOwn(manifest, "scripts") ? expectRecord(manifest.scripts, "npm scripts") : {};
     const names = Object.keys(scripts).sort();
     if (names.length > 100) throw new Error("script count bound");
@@ -54,45 +55,4 @@ export function discoverNpmPackageManifest(value: unknown): NpmManifestDiscovery
     reduceProfileDiscoveryObservations(observations);
     return { state: "observed", kind: "npm_package_manifest", scope: "configured_script_metadata_only", evidenceId, contentHash, observations };
   } catch { return { state: "unconfirmed", kind: "npm_package_manifest", observations: [] }; }
-}
-
-/** Bounded JSON, with duplicate decoded object keys rejected instead of last-value-wins ambiguity. */
-function parseBoundedManifestJson(text: string): unknown {
-  const stack: { object: boolean; keys: Set<string>; expectsKey: boolean }[] = [];
-  let index = 0;
-  while (index < text.length) {
-    const char = text[index]!;
-    if (char === '"') {
-      const start = index++;
-      let closed = false;
-      while (index < text.length) {
-        if (text[index] === "\\") { index += 2; continue; }
-        if (text[index++] === '"') { closed = true; break; }
-      }
-      if (!closed) throw new Error("unterminated manifest string");
-      const parent = stack.at(-1);
-      if (parent?.object && parent.expectsKey) {
-        const key = JSON.parse(text.slice(start, index)) as string;
-        if (parent.keys.has(key)) throw new Error("duplicate manifest key");
-        parent.keys.add(key); parent.expectsKey = false;
-      }
-    } else {
-      if (char === "{" || char === "[") {
-        stack.push({ object: char === "{", keys: new Set(), expectsKey: char === "{" });
-        if (stack.length > 32) throw new Error("manifest depth bound");
-      } else if (char === "}" || char === "]") stack.pop();
-      else if (char === "," && stack.at(-1)?.object) stack.at(-1)!.expectsKey = true;
-      index++;
-    }
-  }
-  // Native parsing remains responsible for full grammar, escape and trailing-content validation.
-  const root = JSON.parse(text) as unknown, pending: unknown[] = [root];
-  let nodes = 0;
-  while (pending.length) {
-    const item = pending.pop();
-    if (++nodes > 10_000) throw new Error("manifest node bound");
-    if (Array.isArray(item)) pending.push(...item);
-    else if (item !== null && typeof item === "object") pending.push(...Object.values(item));
-  }
-  return root;
 }

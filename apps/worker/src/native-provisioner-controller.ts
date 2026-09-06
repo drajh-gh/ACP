@@ -91,7 +91,7 @@ export class NativeProvisionerAdmissionController {
     timer=setTimeout(lose,this.maximumWait);
     const active=()=>!lost && !closing && !signal.aborted;
     try {
-      request=parseProvisionerAdmissionRequest(session.request); expected=parseExpectedPlan(session.expectedPlan);
+      request=parseProvisionerAdmissionRequest(session.request); expected=parseNativeProvisionerExpectedPlan(session.expectedPlan);
       const exactRequest=request,exactPlan=expected;
       pending=(async()=>{
         // Observe an already-settled closure before beginning a transaction.
@@ -127,19 +127,7 @@ export class NativeProvisionerAdmissionController {
     } finally { signal.removeEventListener("abort",lose); }
   }
   private acknowledgement(value:ProvisionerAdmissionAcknowledgement,request:ProvisionerAdmissionRequest,expected:NativeProvisionerExpectedPlan):ProvisionerAdmissionAcknowledgement {
-    const row=exact(value,["attemptId","fence","root","challenge","fresh","hostIdentifier","ownerSessionId","applicationVersion","provenanceId",
-      "treeIdentifier","rootClaimOwnerId","reservationId","reservationRevision","deadlineAt","admittedAt","durationMilliseconds"]);
-    const observed=parseProvisionerAdmissionRequest({ attemptId:row.attemptId,fence:row.fence,root:row.root,challenge:row.challenge });
-    const deadlineAt=parseCanonicalTimestamp(row.deadlineAt),admittedAt=parseCanonicalTimestamp(row.admittedAt),duration=row.durationMilliseconds;
-    if(!isDeepStrictEqual(observed,request) || row.fresh!==true || row.hostIdentifier!==this.owner.hostIdentifier || row.ownerSessionId!==this.owner.sessionId
-      || row.applicationVersion!==this.owner.applicationVersion || row.provenanceId!==expected.provenanceId || row.rootClaimOwnerId!==request.attemptId
-      || row.treeIdentifier!==`Local\\ACP.Provisioner.${request.attemptId}` || row.reservationId!==expected.reservationId || row.reservationRevision!==expected.reservationRevision
-      || deadlineAt!==expected.deadlineAt || !Number.isSafeInteger(duration) || (duration as number)<=250 || (duration as number)>20000
-      || timestampMicroseconds(deadlineAt)<=timestampMicroseconds(admittedAt)
-      || (timestampMicroseconds(deadlineAt)-timestampMicroseconds(admittedAt))/1000n!==BigInt(duration as number)) throw new Error("fresh provisioner acknowledgement mismatch");
-    return { ...observed,fresh:true,hostIdentifier:this.owner.hostIdentifier,ownerSessionId:this.owner.sessionId,applicationVersion:this.owner.applicationVersion,
-      provenanceId:expected.provenanceId,treeIdentifier:row.treeIdentifier as string,rootClaimOwnerId:request.attemptId,reservationId:expected.reservationId,
-      reservationRevision:expected.reservationRevision,deadlineAt,admittedAt,durationMilliseconds:duration as number };
+    return parseNativeProvisionerAcknowledgement(value,request,expected,this.owner);
   }
   private stopReceipt(value:ProvisionerStopRecord,input:ProvisionerStopRecordInput,expected:NativeProvisionerExpectedPlan|undefined):ProvisionerStopRecord {
     const row=exact(value,["attemptId","fence","observation","hostIdentifier","ownerSessionId","applicationVersion","provenanceId","treeIdentifier","recordedAt"]);
@@ -152,11 +140,28 @@ export class NativeProvisionerAdmissionController {
       provenanceId,treeIdentifier:row.treeIdentifier as string,recordedAt };
   }
 }
+/** @internal Shared exact ACK normalization, never a database authenticator. */
+export function parseNativeProvisionerAcknowledgement(value:unknown,request:ProvisionerAdmissionRequest,expected:NativeProvisionerExpectedPlan,
+  owner:AdmissionPort["authority"]):ProvisionerAdmissionAcknowledgement {
+    const row=exact(value,["attemptId","fence","root","challenge","fresh","hostIdentifier","ownerSessionId","applicationVersion","provenanceId",
+      "treeIdentifier","rootClaimOwnerId","reservationId","reservationRevision","deadlineAt","admittedAt","durationMilliseconds"]);
+    const observed=parseProvisionerAdmissionRequest({ attemptId:row.attemptId,fence:row.fence,root:row.root,challenge:row.challenge });
+    const deadlineAt=parseCanonicalTimestamp(row.deadlineAt),admittedAt=parseCanonicalTimestamp(row.admittedAt),duration=row.durationMilliseconds;
+    if(!isDeepStrictEqual(observed,request) || row.fresh!==true || row.hostIdentifier!==owner.hostIdentifier || row.ownerSessionId!==owner.sessionId
+      || row.applicationVersion!==owner.applicationVersion || row.provenanceId!==expected.provenanceId || row.rootClaimOwnerId!==request.attemptId
+      || row.treeIdentifier!==`Local\\ACP.Provisioner.${request.attemptId}` || row.reservationId!==expected.reservationId || row.reservationRevision!==expected.reservationRevision
+      || deadlineAt!==expected.deadlineAt || !Number.isSafeInteger(duration) || (duration as number)<=250 || (duration as number)>20000
+      || timestampMicroseconds(deadlineAt)<=timestampMicroseconds(admittedAt)
+      || (timestampMicroseconds(deadlineAt)-timestampMicroseconds(admittedAt))/1000n!==BigInt(duration as number)) throw new Error("fresh provisioner acknowledgement mismatch");
+    return { ...observed,fresh:true,hostIdentifier:owner.hostIdentifier,ownerSessionId:owner.sessionId,applicationVersion:owner.applicationVersion,
+      provenanceId:expected.provenanceId,treeIdentifier:row.treeIdentifier as string,rootClaimOwnerId:request.attemptId,reservationId:expected.reservationId,
+      reservationRevision:expected.reservationRevision,deadlineAt,admittedAt,durationMilliseconds:duration as number };
+}
 function exact(value:unknown,keys:readonly string[]):Record<string,unknown> {
   const row=expectRecord(value,"private provisioner protocol"); expectOnlyKeys(row,keys,"private provisioner protocol");
   if(keys.some((key)=>!Object.hasOwn(row,key))) throw new TypeError("every private provisioner protocol field is required"); return row;
 }
-function parseExpectedPlan(value:unknown):NativeProvisionerExpectedPlan {
+export function parseNativeProvisionerExpectedPlan(value:unknown):NativeProvisionerExpectedPlan {
   const row=exact(value,["reservationId","reservationRevision","deadlineAt","provenanceId"]);
   if(!Number.isSafeInteger(row.reservationRevision) || (row.reservationRevision as number)<1 || (row.reservationRevision as number)>2147483647) throw new TypeError("exact original reservation revision required");
   return { reservationId:parseStableId(row.reservationId,"worktreeReservation"),reservationRevision:row.reservationRevision as number,
