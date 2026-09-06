@@ -49,7 +49,8 @@ export class WindowsProvisionerProcessRunner implements NativeProvisionerRunner 
     const environment=minimalCodexEnvironment();
     const input=JSON.stringify({attemptId:plan.attemptId,workspacePath:plan.workspacePath,branchRef:plan.branchRef,baseRevision:plan.baseRevision,
       reportedParent:plan.reportedParent,commonGitDirectory:plan.commonGitDirectory});
-    const initial=JSON.stringify({...binding,command:{executable:this.node,arguments:["--experimental-strip-types",this.runnerPath],workspace:plan.reportedParent.path,
+    const initial=JSON.stringify({...binding,bindings:{workspacePath:plan.workspacePath,reportedParent:{path:plan.reportedParent.path,identity:plan.reportedParent.identity},
+      commonGitDirectory:plan.commonGitDirectory},command:{executable:this.node,arguments:["--experimental-strip-types",this.runnerPath],workspace:plan.reportedParent.path,
       environment:Object.entries(environment).map(([key,value])=>`${key}=${value}`),input,maximumOutputBytes:this.outputLimit}});
     // Construct and validate every option/frame before creating a bridge.
     const owner=new WindowsProvisionerProcessOwner(binding,initial,{maximumOutputBytes:this.outputLimit,...(this.onSpawn?{onSpawn:this.onSpawn}:{})});

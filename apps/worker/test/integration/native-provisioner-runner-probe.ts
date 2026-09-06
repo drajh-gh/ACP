@@ -13,13 +13,14 @@ import { gone } from "./native-lease-probe.ts";
 export async function nativeProvisionerRunnerProbe(runner="./synthetic-provisioner-plan-runner.ts") {
   const base=process.env.ACP_TEST_NATIVE_CHANNEL_ROOT,powershell=process.env.ACP_TEST_PWSH;
   assert.ok(base && isAbsolute(base) && powershell && isAbsolute(powershell),"owned fixture and exact PowerShell required");
-  const directory=await mkdtemp(join(base,"runner ž 🚀-")),fenceDirectory=join(directory,"fence");await mkdir(fenceDirectory);
+  const directory=await mkdtemp(join(base,"runner ž 🚀-")),fenceDirectory=join(directory,"fence"),commonPath=join(directory,"synthetic-repository",".git");await mkdir(fenceDirectory);await mkdir(commonPath,{recursive:true});
   const pids=new Set<number>(),handles:OwnedProvisionerHandle[]=[],abort=new AbortController();
   const report=(pid:number,purpose:string)=>{pids.add(pid);process.stdout.write(`Owned PID ${pid}: ${purpose}\n`);};
   const parent=await describeWindowsProvisionerFence(directory,new AbortController().signal,{onSpawn:report});
+  const common=await describeWindowsProvisionerFence(commonPath,new AbortController().signal,{onSpawn:report});assert.deepEqual(common.scope,parent.scope);
   const plan=provisionerPlanFixture({reportedParent:{path:directory,identity:parent.directoryIdentity,observedAt:utc6(Date.now()-1000)},
     fencePlan:{namespace:"acp-worktree-provisioner-v1",directory:fenceDirectory},workspacePath:join(directory,"future"),machineFingerprint:parent.scope.machineFingerprint,
-    commonGitDirectory:{path:join(directory,"synthetic-repository",".git"),identity:"win32-dir:12345678:0000000000000002"}});
+    commonGitDirectory:{path:commonPath,identity:common.directoryIdentity}});
   const authority={hostIdentifier:plan.hostIdentifier,sessionId:plan.ownerSessionId,applicationVersion:plan.applicationVersion};
   const options={runnerPath:fileURLToPath(new URL(runner,import.meta.url)),powershellExecutable:powershell,onSpawn:report};
   const owner=new WindowsProvisionerProcessRunner(authority,options);

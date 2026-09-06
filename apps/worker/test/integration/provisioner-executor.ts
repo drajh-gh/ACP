@@ -29,11 +29,13 @@ try {
     admissions=new PostgresProvisionerAdmissionStore(pool,runtime),journal=new PostgresProvisionerJournalStore(pool,runtime);
   const native=new WindowsProvisionerProcessRunner(plans.authority,{runnerPath:fileURLToPath(new URL("./synthetic-provisioner-plan-runner.ts",import.meta.url)),powershellExecutable:powershell,onSpawn:report});
   const reservationId=createStableId("worktreeReservation"),workspacePath=join(parentDirectory,"FutureCase"),assignment=await f.assignment(undefined,workspacePath,true),repositoryBindingId=createStableId("repositoryBinding");
-  // Common-Git/check-out identities are synthetic retained metadata, never native
-  // filesystem authority. This fixed capsule neither creates nor mutates a target.
-  const checkoutPath=join(directory,"synthetic-repository"),commonGitDirectory={path:join(checkoutPath,".git"),identity:"win32-dir:12345678:0000000000000002"};
+  // Actual empty directory identities, not a Git repository/content assertion.
+  // This fixed capsule neither creates nor mutates a prospective target.
+  const checkoutPath=join(directory,"synthetic-repository"),commonPath=join(checkoutPath,".git");await mkdir(commonPath,{recursive:true});
+  const checkout=await describeWindowsProvisionerFence(checkoutPath,abort.signal,{onSpawn:report}),common=await describeWindowsProvisionerFence(commonPath,abort.signal,{onSpawn:report});
+  const commonGitDirectory={path:commonPath,identity:common.directoryIdentity};
   await registry.recordRepository({repositoryBindingId,repositoryId:createStableId("repository"),projectId:assignment.packet.projectId,machineFingerprint:parent.scope.machineFingerprint,
-    checkout:{path:checkoutPath,identity:"win32-dir:12345678:0000000000000001"},commonGitDirectory,observedAt:new Date().toISOString(),provenanceId:assignment.a.packetProvenanceId});
+    checkout:{path:checkoutPath,identity:checkout.directoryIdentity},commonGitDirectory,observedAt:new Date().toISOString(),provenanceId:assignment.a.packetProvenanceId});
   await holds.reserve({reservationId,repositoryBindingId,missionId:assignment.a.missionId,nodeId:assignment.a.nodeId,graphRevision:"launch-recovery-check",workspacePath,
     branchRef:"refs/heads/Executor/ExactCase",provenanceId:assignment.a.packetProvenanceId});
   let plan:WorktreeProvisionerAttempt,loads=0,starts=0,accepts=0,goes=0,writes=0,physicallyClosed=false,commitVisible=false,stopAfterClose=false;

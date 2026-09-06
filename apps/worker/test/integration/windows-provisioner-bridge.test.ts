@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { readFile } from "node:fs/promises";
+import { mkdir,readFile,rename,stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { it } from "node:test";
 import { createStableId } from "@acp/domain";
@@ -10,6 +10,7 @@ import { provisionerBridgeProbe,pause } from "./native-provisioner-bridge-probe.
 import { minimalCodexEnvironment } from "../../src/codex-sdk-transport.ts";
 import { sealWindowsProvisionerAttempt } from "../../src/windows-launch-fence.ts";
 import { gone } from "./native-lease-probe.ts";
+import type { Frame } from "./native-lease-probe.ts";
 
 it("provisioner bridge core: exact suspended identity is fenced before fresh acceptance and GO",{timeout:20000},async()=>{
   const p=await provisionerBridgeProbe();
@@ -113,14 +114,14 @@ it("provisioner bridge safety: same-attempt competing and completed replay canno
   t.after(()=>cleanupAll([()=>competing?.cleanup(),()=>replay?.cleanup(),()=>p.cleanup()]));
     await p.next("ready");const before=await readFile(p.fenceFile,"utf8");
     assert.ok(Date.parse(p.expectedPlan.deadlineAt)-Date.now()>5000,"competing launch has original deadline slack");
-    competing=await provisionerBridgeProbe({launch:p.launch});
+    competing=await provisionerBridgeProbe({launch:p.launch,fixture:p.fixture});
     assert.equal((await competing.next(["ready","unconfirmed"])).type,"unconfirmed");await competing.closed;
     assert.ok(Date.parse(p.expectedPlan.deadlineAt)>Date.now(),"competing denial precedes original expiry");
     assert.doesNotThrow(()=>process.kill(p.request.root.processId,0));assert.equal(await readFile(p.fenceFile,"utf8"),before);
     await p.accept();p.send({type:"go"});await p.next("closed");await p.closed;
     const sealed=await readFile(p.fenceFile,"utf8");
     assert.ok(Date.parse(p.expectedPlan.deadlineAt)-Date.now()>5000,"completed replay has original deadline slack");
-    replay=await provisionerBridgeProbe({launch:p.launch});
+    replay=await provisionerBridgeProbe({launch:p.launch,fixture:p.fixture});
     assert.equal((await replay.next(["ready","unconfirmed"])).type,"unconfirmed");await replay.closed;
     assert.ok(Date.parse(p.expectedPlan.deadlineAt)>Date.now(),"replay denial precedes original expiry");
     assert.equal(await readFile(p.fenceFile,"utf8"),sealed);
@@ -224,3 +225,81 @@ for(const transition of ["duplicate admission","duplicate GO","stop then GO"]) {
     } finally {await p.cleanup();}
   });
 }
+it("provisioner bridge bindings: original common metadata identity remains pinned while the real root is suspended and running",{timeout:20000},async(t)=>{
+  const p=await provisionerBridgeProbe({runner:"./nonreading-owned-runner.ts"});t.after(p.cleanup);await p.next("ready");
+  const common=p.bindings.commonGitDirectory.path;
+  await assert.rejects(rename(common,common+"-renamed"));
+  await p.accept();p.send({type:"go"});await pause(50);assert.doesNotThrow(()=>process.kill(p.request.root.processId,0));
+  await assert.rejects(rename(common,common+"-renamed"));
+  p.send({type:"stop"});const frame=await p.next("closed");await p.closed;parseProvisionerStopRecord(frame.stop);
+  await rename(common,common+"-released");await rename(common+"-released",common);
+});
+
+const observedHost="./synthetic-provisioner-bridge-pins.ps1";
+async function closeObserved(p:Probe) {p.bridge.kill();await p.cleanup();}
+async function witness(p:Probe,stage:string,moved:boolean) {
+  const frame=await p.next("pin-observed");
+  assert.equal(frame.stage,stage);assert.equal(frame.moved,moved);
+  assert.equal(frame.errorCode,moved?0:32,"ordinary rename is denied specifically by a sharing violation");
+}
+it("provisioner bridge bindings: pins survive exact tree stop and sealing then release before bridge exit",{timeout:20000},async(t)=>{
+  const p=await provisionerBridgeProbe({hostScript:observedHost});t.after(()=>closeObserved(p));
+  await p.next("ready");await p.accept();p.send({type:"go"});
+  await witness(p,"tree-empty-before-seal",false);await witness(p,"sealed",false);
+  await witness(p,"pins-released",true);assert.equal((await p.next("bridge-returned")).result,0);
+  const stop=parseProvisionerStopRecord((await p.next("closed")).stop);assert.equal(stop.observation.state,"terminated");
+  await gone(p.request.root.processId);assert.match(await readFile(p.fenceFile,"utf8"),/\nsealed\n$/u);
+  const common=p.bindings.commonGitDirectory.path;await rename(common,common+"-released");await rename(common+"-released",common);
+  assert.doesNotThrow(()=>process.kill(p.bridge.pid!,0),"release is observed while the same bridge helper remains alive");
+});
+it("provisioner bridge bindings: unconfirmed seal retains pins after Run returns until dedicated helper exit",{timeout:25000},async(t)=>{
+  const p=await provisionerBridgeProbe({hostScript:observedHost});let actor:Awaited<ReturnType<typeof fenceActor>>|undefined;
+  t.after(()=>cleanupAll([()=>actor?.close(),()=>closeObserved(p)]));
+  await p.next("ready");actor=await fenceActor(p,"hold");p.send({type:"stop"});
+  // Execute and its error handler each attempt exact sealing; both must retain
+  // the same pins while the independently held fence denies access.
+  await witness(p,"tree-empty-before-seal",false);await witness(p,"tree-empty-before-seal",false);await p.next("unconfirmed");
+  await witness(p,"pins-retained-until-exit",false);assert.equal((await p.next("bridge-returned")).result,1);
+  await gone(p.request.root.processId);assert.equal(p.frames.some(f=>f.type==="closed"),false);
+  const common=p.bindings.commonGitDirectory.path;await assert.rejects(rename(common,common+"-held"));
+  assert.doesNotThrow(()=>process.kill(p.bridge.pid!,0));
+  p.bridge.kill();await p.closed;await rename(common,common+"-released");await rename(common+"-released",common);
+  await actor.close();
+  const observed=await sealWindowsProvisionerAttempt(p.fence,p.attemptId,new AbortController().signal,{onSpawn:p.report});
+  assert.notEqual(observed.state,"unconfirmed");
+});
+
+type Bindings={workspacePath:string;reportedParent:{path:string;identity:string};commonGitDirectory:{path:string;identity:string}};
+const changedBindings:Record<string,Record<string,(launch:Frame)=>Frame>>={
+  "bindings-schema":{
+    missing:launch=>{delete launch.bindings;return launch;},
+    unknown:launch=>({...launch,bindings:{...(launch.bindings as Bindings),extra:true}}),
+    "historical parent timestamp":launch=>{const b=launch.bindings as Bindings;return {...launch,bindings:{...b,reportedParent:{...b.reportedParent,observedAt:"2000-01-01T00:00:00.000000Z"}}};},
+  },
+  "bindings-identity":{
+    "parent identity":launch=>{(launch.bindings as Bindings).reportedParent.identity="win32-dir:00000000:0000000000000000";return launch;},
+    "common identity":launch=>{(launch.bindings as Bindings).commonGitDirectory.identity="win32-dir:00000000:0000000000000000";return launch;},
+    "missing common":launch=>{(launch.bindings as Bindings).commonGitDirectory.path+="-missing";return launch;},
+    "different command workspace":launch=>({...launch,command:{...(launch.command as Frame),workspace:(launch.bindings as Bindings).commonGitDirectory.path}}),
+    "non-child target":launch=>{(launch.bindings as Bindings).workspacePath+="\\nested";return launch;},
+  },
+};
+async function deniedBindings(p:Probe) {
+  await p.next("unconfirmed");assert.equal((await p.next("bridge-returned")).result,1);
+  assert.equal(p.frames.some(f=>["ready","accepted","output","closed"].includes(f.type as string)),false);
+  await assert.rejects(stat(p.fenceFile),{code:"ENOENT"},"binding denial does not consume a fence or create a native root");
+  for(const path of [p.bindings.commonGitDirectory.path,p.bindings.reportedParent.path]) {
+    await rename(path,path+"-released");await rename(path+"-released",path);
+  }
+  assert.doesNotThrow(()=>process.kill(p.bridge.pid!,0),"partial acquisition cleanup is observed before helper exit");
+}
+for(const [group,cases] of Object.entries(changedBindings))for(const [name,transformLaunch] of Object.entries(cases)) {
+  it(`provisioner bridge ${group}: ${name} denies before root creation without leaked pins`,{timeout:20000},async(t)=>{
+    const p=await provisionerBridgeProbe({hostScript:observedHost,transformLaunch});t.after(()=>closeObserved(p));await deniedBindings(p);
+  });
+}
+it("provisioner bridge bindings-identity: genuine common directory replacement denies against original identity",{timeout:20000},async(t)=>{
+  const p=await provisionerBridgeProbe({hostScript:observedHost,beforeLaunch:async fixture=>{
+    const path=fixture.bindings.commonGitDirectory.path;await rename(path,path+"-original");await mkdir(path);
+  }});t.after(()=>closeObserved(p));await deniedBindings(p);
+});

@@ -21,16 +21,24 @@ public sealed class WindowsProvisionerBridge
     private readonly BoundedReader reader = new BoundedReader(Console.OpenStandardInput());
     private WindowsWorkerJob job;
     private WindowsLaunchFence heldFence;
+    private WindowsProvisionerBindingPins bindingPins;
+    private readonly Action<string, string> observe;
+    private static readonly List<WindowsProvisionerBindingPins> retainedUntilExit = new List<WindowsProvisionerBindingPins>();
+    private string commonGitPath;
+    private bool creationAttempted, treeEmptyConfirmed, stopSealed;
     private JsonElement plan, owner, fence, request;
     private string attemptId, directory, directoryIdentity, input;
     private long revision;
     private int maximumOutputBytes, outputBytes;
     private bool accepted, goConsumed, reported;
 
-    private WindowsProvisionerBridge(WindowsWorkerScope scope) { this.scope = scope; }
-    public static async Task<int> Run(WindowsWorkerScope scope)
+    private WindowsProvisionerBridge(WindowsWorkerScope scope, Action<string, string> observe) { this.scope = scope; this.observe = observe; }
+    public static Task<int> Run(WindowsWorkerScope scope) => RunObserved(scope, null);
+    // Same-assembly fixture observation only. No IPC field or public launch
+    // option can select this hook; ordinary hosts always call Run above.
+    internal static async Task<int> RunObserved(WindowsWorkerScope scope, Action<string, string> observe)
     {
-        var bridge = new WindowsProvisionerBridge(scope);
+        var bridge = new WindowsProvisionerBridge(scope, observe);
         try { await bridge.Execute(); return 0; }
         catch
         {
@@ -42,14 +50,14 @@ public sealed class WindowsProvisionerBridge
         }
         finally
         {
-            bridge.heldFence?.Dispose(); bridge.job?.Dispose(); bridge.reader.Dispose();
+            bridge.Cleanup();
         }
     }
 
     private async Task Execute()
     {
         JsonElement launch = Parse(await reader.ReadLine());
-        Exact(launch, "attemptId", "expectedPlan", "owner", "fencePlan", "machineFingerprint", "command");
+        Exact(launch, "attemptId", "expectedPlan", "owner", "fencePlan", "machineFingerprint", "command", "bindings");
         attemptId = Id(launch, "attemptId", "wpa_");
         plan = launch.GetProperty("expectedPlan"); owner = launch.GetProperty("owner");
         Exact(plan, "reservationId", "reservationRevision", "deadlineAt", "provenanceId");
@@ -71,10 +79,20 @@ public sealed class WindowsProvisionerBridge
         string[] arguments = Strings(command.GetProperty("arguments"), 16), environment = Strings(command.GetProperty("environment"), 64);
         input = Text(command, "input", true);
         maximumOutputBytes = checked((int)Integer(command, "maximumOutputBytes", 1, 1048576));
+        JsonElement bindings = launch.GetProperty("bindings"); Exact(bindings, "workspacePath", "reportedParent", "commonGitDirectory");
+        JsonElement parent = bindings.GetProperty("reportedParent"), common = bindings.GetProperty("commonGitDirectory");
+        Exact(parent, "path", "identity"); Exact(common, "path", "identity");
+        string parentPath = Text(parent, "path"); commonGitPath = Text(common, "path");
+        if (!string.Equals(workspace, parentPath, StringComparison.Ordinal)) throw new InvalidDataException("command workspace differs from original parent");
+        bindingPins = WindowsProvisionerBindingPins.Open(scope, Text(launch, "machineFingerprint"), Text(bindings, "workspacePath"),
+            parentPath, Text(parent, "identity"), commonGitPath, Text(common, "identity"));
         directoryIdentity = WindowsLaunchFence.DirectoryIdentity(directory);
         fence = Element(new { @namespace = "acp-worktree-provisioner-v1", directory, directoryIdentity,
             scope = new { machineFingerprint = scope.MachineFingerprint, bootedAt = scope.BootedAt, sessionId = scope.SessionId } });
         heldFence = OpenFence(); heldFence.Begin(); // Durable consumption precedes CreateProcess.
+        // Factory failure may occur after partial creation; job == null is not
+        // proof that no native root existed or that kill-on-close has finished.
+        creationAttempted = true;
         job = WindowsWorkerJob.CreateWithProvisionerAdmission("Local\\ACP.Provisioner." + attemptId,
             executable, arguments, workspace, environment, deadline, attemptId, revision);
         heldFence.RecordRoot(job.ProcessId, job.ProcessStartToken, job.StartedAt);
@@ -136,6 +154,7 @@ public sealed class WindowsProvisionerBridge
             await Task.Delay(10);
         }
         if (!job.TerminateAndWait(5000)) throw new InvalidOperationException("tree closure unconfirmed");
+        treeEmptyConfirmed = true;
         // Stop all inherited writers before draining buffered stdout. The same
         // native watchdog bounds a blocked reader/output sink independently.
         while (true)
@@ -170,12 +189,14 @@ public sealed class WindowsProvisionerBridge
     {
         if (reported) return;
         if (job == null || !job.TerminateAndWait(5000)) throw new InvalidOperationException("owned rooted closure unavailable");
+        treeEmptyConfirmed = true; Observe("tree-empty-before-seal");
         heldFence?.Dispose(); heldFence = null;
         using (var seal = OpenFence())
         {
             if (seal.ProcessId != job.ProcessId || seal.ProcessStartToken != job.ProcessStartToken || seal.StartedAt != job.StartedAt)
                 throw new InvalidOperationException("stopped root differs from permanent fence");
             seal.Seal();
+            stopSealed = true; Observe("sealed");
         }
         int exitCode = job.ExitCode; // Actual held root, never a generic 137 substitution.
         // This provisional frame is usable only together with bridge-process
@@ -186,6 +207,31 @@ public sealed class WindowsProvisionerBridge
             reason = "exact_owned_tree_terminated", root = Root(), exitCode } } });
         reported = true;
     }
+    private void Cleanup()
+    {
+        Exception failure = null;
+        void DisposeOne(IDisposable value) { try { value?.Dispose(); } catch (Exception error) { failure ??= error; } }
+        DisposeOne(heldFence); DisposeOne(job);
+        if (bindingPins != null)
+        {
+            if (!creationAttempted || (treeEmptyConfirmed && stopSealed))
+            {
+                try { bindingPins.Dispose(); Observe("pins-released"); }
+                catch (Exception error) { failure ??= error; }
+            }
+            else
+            {
+                // Dedicated process exits after Run. Strong retention prevents
+                // GC from releasing pins first on unconfirmed factory/stop/seal
+                // paths. OS teardown still provides no relative handle ordering.
+                lock (retainedUntilExit) retainedUntilExit.Add(bindingPins);
+                Observe("pins-retained-until-exit");
+            }
+        }
+        DisposeOne(reader);
+        if (failure != null) throw failure;
+    }
+    private void Observe(string stage) { try { observe?.Invoke(stage, commonGitPath); } catch { /* Observation cannot change authority or cleanup. */ } }
     private void Output(byte[] bytes, int count)
     {
         outputBytes = checked(outputBytes + count);

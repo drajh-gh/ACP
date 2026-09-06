@@ -8,26 +8,44 @@ import { fileURLToPath } from "node:url";
 import { createStableId } from "@acp/domain";
 import { parseProvisionerAdmissionRequest,type ProvisionerAdmissionAcknowledgement,type ProvisionerAdmissionRequest } from "@acp/storage";
 import { minimalCodexEnvironment } from "../../src/codex-sdk-transport.ts";
-import { describeWindowsProvisionerFence } from "../../src/windows-launch-fence.ts";
+import { describeWindowsProvisionerFence,type WindowsProvisionerFenceDescriptor } from "../../src/windows-launch-fence.ts";
 import { gone,type Frame } from "./native-lease-probe.ts";
 
 export const pause=(ms:number)=>new Promise<void>((resolve)=>setTimeout(resolve,ms));
 export const utc6=(instant:number)=>new Date(instant).toISOString().replace("Z","000Z");
+interface ProvisionerBridgeFixture {
+  readonly directory:string;
+  readonly fence:WindowsProvisionerFenceDescriptor;
+  readonly bindings:{readonly workspacePath:string;readonly reportedParent:{readonly path:string;readonly identity:string};readonly commonGitDirectory:{readonly path:string;readonly identity:string}};
+}
 /** Real native transport with synthetic original-plan/ACK metadata; no DB or Git. */
-export async function provisionerBridgeProbe(options:{ input?:string;runner?:string;launch?:Frame }={}) {
+export async function provisionerBridgeProbe(options:{ input?:string;runner?:string;launch?:Frame;fixture?:ProvisionerBridgeFixture;
+  beforeLaunch?:(fixture:ProvisionerBridgeFixture)=>Promise<void>;transformLaunch?:(launch:Frame)=>Frame;hostScript?:string }={}) {
   const owner=process.env.ACP_TEST_NATIVE_CHANNEL_ROOT; assert.ok(owner && isAbsolute(owner),"outer owned fixture required");
-  const directory=await mkdtemp(join(owner,"provisioner ž 🚀-")),fenceDirectory=join(directory,"fence"); await mkdir(fenceDirectory);
   const pids=new Set<number>(),report=(pid:number,purpose:string)=>{pids.add(pid);process.stdout.write(`Owned PID ${pid}: ${purpose}\n`);};
-  const fence=await describeWindowsProvisionerFence(fenceDirectory,new AbortController().signal,{onSpawn:report});
+  let fixture=options.fixture;
+  if(!fixture){
+    const directory=await mkdtemp(join(owner,"provisioner ž 🚀-")),fenceDirectory=join(directory,"fence"),commonPath=join(directory,"repository",".git");
+    await mkdir(fenceDirectory);await mkdir(commonPath,{recursive:true});
+    const fence=await describeWindowsProvisionerFence(fenceDirectory,new AbortController().signal,{onSpawn:report});
+    const parent=await describeWindowsProvisionerFence(directory,new AbortController().signal,{onSpawn:report});
+    const common=await describeWindowsProvisionerFence(commonPath,new AbortController().signal,{onSpawn:report});
+    assert.deepEqual(parent.scope,fence.scope);assert.deepEqual(common.scope,fence.scope);
+    fixture={directory,fence,bindings:{workspacePath:join(directory,"FutureCase"),reportedParent:{path:directory,identity:parent.directoryIdentity},
+      commonGitDirectory:{path:commonPath,identity:common.directoryIdentity}}};
+  }
+  const {directory,fence,bindings}=fixture;
+  await options.beforeLaunch?.(fixture);
   const attemptId=createStableId("worktreeProvisionerAttempt"),environment=minimalCodexEnvironment();
   const expectedPlan={reservationId:createStableId("worktreeReservation"),reservationRevision:7,deadlineAt:utc6(Date.now()+20000),provenanceId:createStableId("provenance")};
   const authority={hostIdentifier:"host:native-provisioner-fixture",sessionId:createStableId("workerHostSession"),applicationVersion:"fixture"};
-  const launch={attemptId,expectedPlan,owner:authority,machineFingerprint:fence.scope.machineFingerprint,
+  const initial={attemptId,expectedPlan,owner:authority,machineFingerprint:fence.scope.machineFingerprint,bindings,
     fencePlan:{namespace:fence.namespace,directory:fence.directory},command:{executable:process.execPath,
       arguments:["--experimental-strip-types",fileURLToPath(new URL(options.runner??"./synthetic-owned-runner.ts",import.meta.url))],
       workspace:directory,environment:Object.entries(environment).map(([key,value])=>`${key}=${value}`),
       input:options.input??JSON.stringify({text:"native ž 🚀"}),maximumOutputBytes:65536},...options.launch};
-  const bridge=spawn("pwsh",["-NoLogo","-NoProfile","-NonInteractive","-File",fileURLToPath(new URL("../../native/windows-provisioner-host.ps1",import.meta.url))],
+  const launch=options.transformLaunch?.(structuredClone(initial))??initial;
+  const bridge=spawn("pwsh",["-NoLogo","-NoProfile","-NonInteractive","-File",fileURLToPath(new URL(options.hostScript??"../../native/windows-provisioner-host.ps1",import.meta.url))],
     {windowsHide:true,stdio:["pipe","pipe","pipe"],env:environment});
   assert.ok(bridge.pid); report(bridge.pid,"private provisioner bridge");
   const closed=once(bridge,"close"),exited=once(bridge,"exit"); void closed.catch(()=>{}); void exited.catch(()=>{});
@@ -72,6 +90,6 @@ export async function provisionerBridgeProbe(options:{ input?:string;runner?:str
     try{await closed;}finally{clearTimeout(timer);}
     for(const pid of pids) await gone(pid,5000);
   }
-  return {bridge,closed,exited,frames,next,send,cleanup,accept,acknowledgement,launch,expectedPlan,authority,fence,attemptId,directory,report,
-    fenceFile:join(fenceDirectory,attemptId+".provision"),get request(){assert.ok(request);return request;}};
+  return {bridge,closed,exited,frames,next,send,cleanup,accept,acknowledgement,launch,expectedPlan,authority,fence,attemptId,directory,report,fixture,bindings,
+    fenceFile:join(fence.directory,attemptId+".provision"),get request(){assert.ok(request);return request;}};
 }

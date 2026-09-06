@@ -326,6 +326,16 @@ Standalone `provisioner-pins` phases `^provisioner pins core:` and
 identity and ordinary rename/delete exclusion, not target absence, Git-content
 stability, in-place metadata protection, restricted access or writer-stop ordering.
 See [the identity-only pin contract](docs/architecture/0032-provisioner-binding-identity-pins.md).
+The bridge now requires those original bindings. Its additional exact
+`provisioner-bridge` phases `^provisioner bridge bindings:`,
+`^provisioner bridge bindings-schema:` and `^provisioner bridge bindings-identity:`
+run sequentially through the same script. They check pin retention through normal
+tree stop and sealing, explicit release before helper exit, conservative retention
+after an unconfirmed seal, and pre-creation binding rejection without leaked pins.
+Run the existing core, ack-owner, ack-plan, ack-root, ack-fence, framing, safety
+and loss phases separately as regressions. These remain synthetic and do not
+prove abrupt-exit ordering or restricted Git authority. See
+[the bridge binding lifetime](docs/architecture/0033-provisioner-bridge-binding-lifetime.md).
 The three `FilesystemLeaseChannelNative` phases are focused, model-free real
 database/native lifecycle checks. Each applies the seeded schema through 0014,
 then runs only its selected scenario; predecessor suites remain separate gates.
