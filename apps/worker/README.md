@@ -380,6 +380,16 @@ the enclosing owned native job must exit before the UUID fixture is removed.
 
 ### Existing worker and database gates
 
+`scripts/check-postgres.ps1 -NativeRootClaims` accepts separate `core`, `races`,
+`upgrade`, `conflict`, `legacy` and `regression` phases. Run them sequentially.
+This standalone storage-only gate keeps 30-second children and a 90-second outer
+limit. Legacy genuinely seeds a supervised row under0007 before scope existed;
+upgrade/conflict seed0019 before0020 backfill. Regression checks the prior journal
+and worker launch recovery under0020. Busy0020 migration source locks fail fast:
+retry explicitly after writers are quiescent. Synthetic root claims are not
+native identity proof or execution permission. See
+[ADR0024](../../docs/architecture/0024-native-root-claims.md).
+
 The separate inert provisioner journal records trusted native claims only; it is
 not yet connected to a launcher or the native sealing helper. See
 [ADR0023](../../docs/architecture/0023-inert-provisioner-journal.md).

@@ -19,6 +19,8 @@ param(
   [string]$ProvisionerPlans,
   [ValidateSet('core', 'races', 'expiry', 'upgrade', 'regression')]
   [string]$ProvisionerJournal,
+  [ValidateSet('core', 'races', 'upgrade', 'conflict', 'legacy', 'regression')]
+  [string]$NativeRootClaims,
   [ValidateSet('core', 'races', 'expiry', 'limits', 'snapshot', 'upgrade', 'regression', 'http')]
   [string]$Readiness,
   [ValidateSet('core', 'races', 'references', 'snapshot', 'upgrade', 'regression', 'http', 'discovery', 'manifest', 'pinned', 'bound-manifest', 'batch-manifest')]
@@ -32,6 +34,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+if ($NativeRootClaims -and ($LifecycleOnly -or $HostOnly -or $LaunchRecovery -or $LaunchNative -or $FilesystemBindings -or $RepositoryBindingOnly -or $FilesystemNative -or $FilesystemLeases -or $FilesystemLeaseNative -or $FilesystemLeaseChannelNative -or $WorktreeReservations -or $MigrationSessions -or $CounterpartStatus -or $ProvisionerPlans -or $ProvisionerJournal -or $Readiness -or $ProfileProposals)) { throw 'NativeRootClaims is a standalone bounded gate' }
 if ($ProvisionerJournal -and ($LifecycleOnly -or $HostOnly -or $LaunchRecovery -or $LaunchNative -or $FilesystemBindings -or $RepositoryBindingOnly -or $FilesystemNative -or $FilesystemLeases -or $FilesystemLeaseNative -or $FilesystemLeaseChannelNative -or $WorktreeReservations -or $MigrationSessions -or $CounterpartStatus -or $ProvisionerPlans -or $Readiness -or $ProfileProposals)) { throw 'ProvisionerJournal is a standalone bounded gate' }
 if ($RepositoryBindingOnly -and ($LifecycleOnly -or $HostOnly -or $LaunchRecovery -or $LaunchNative -or $FilesystemBindings -or $FilesystemNative -or $FilesystemLeases -or $FilesystemLeaseNative -or $FilesystemLeaseChannelNative -or $WorktreeReservations -or $MigrationSessions -or $CounterpartStatus -or $ProvisionerPlans -or $Readiness -or $ProfileProposals)) { throw 'RepositoryBindingOnly is a standalone bounded gate' }
 if ($LaunchNative -and (-not $LaunchRecovery -or -not $LifecycleOnly)) { throw 'LaunchNative requires LaunchRecovery and LifecycleOnly to retain the bounded gate budget' }
@@ -128,6 +131,7 @@ if (-not $Internal) {
   if ($CounterpartStatus) { $commandLine += ' -CounterpartStatus ' + $CounterpartStatus }
   if ($ProvisionerPlans) { $commandLine += ' -ProvisionerPlans ' + $ProvisionerPlans }
   if ($ProvisionerJournal) { $commandLine += ' -ProvisionerJournal ' + $ProvisionerJournal }
+  if ($NativeRootClaims) { $commandLine += ' -NativeRootClaims ' + $NativeRootClaims }
   if ($Readiness) { $commandLine += ' -Readiness ' + $Readiness }
   if ($ProfileProposals) { $commandLine += ' -ProfileProposals ' + $ProfileProposals }
   if ($MigrationSessions) { $commandLine += ' -MigrationSessions' }
@@ -368,7 +372,7 @@ try {
     Write-Host 'Migration session integration passed; removing only the owned disposable database container.'
     return
   }
-  if ($RepositoryBindingOnly -or $FilesystemLeaseChannelNative -or $WorktreeReservations -or $CounterpartStatus -or $ProvisionerPlans -or $ProvisionerJournal -or $Readiness -or $ProfileProposals) {
+  if ($RepositoryBindingOnly -or $FilesystemLeaseChannelNative -or $WorktreeReservations -or $CounterpartStatus -or $ProvisionerPlans -or $ProvisionerJournal -or $NativeRootClaims -or $Readiness -or $ProfileProposals) {
     # Focused real database/native phases apply the same seeded schema directly.
     # Unrelated predecessor suites cannot consume their bounded child's budget.
     $focusedMigrations = @('0006_host_dispatch.sql', '0007_supervised_workers.sql', '0008_worker_recovery.sql',
@@ -377,12 +381,31 @@ try {
     if (-not $RepositoryBindingOnly) { $focusedMigrations += '0014_filesystem_writer_leases.sql' }
     foreach ($migration in $focusedMigrations) {
       Invoke-AcpSqlFile ('packages/storage/migrations/' + $migration) ('Focused prerequisite schema: ' + $migration)
+      if ($NativeRootClaims -eq 'legacy' -and $migration -eq '0007_supervised_workers.sql') {
+        Invoke-AcpNodeCheck 'packages/storage/test/integration/native-root-legacy.ts' 'Genuine pre-scope supervised worker history' 'before' -TimeoutSeconds 30
+      }
     }
     if ($RepositoryBindingOnly) {
       Invoke-AcpSqlFile 'packages/storage/migrations/0013_filesystem_bindings.down.sql' '0013 empty registry downgrade'
       Invoke-AcpSqlFile 'packages/storage/migrations/0013_filesystem_bindings.sql' '0013 empty registry re-upgrade'
       Invoke-AcpNodeCheck 'packages/storage/test/integration/filesystem-bindings.ts' 'Isolated repository registry integration' -TimeoutSeconds 30
       Write-Host 'Focused repository registry phase passed; no native observation, writer lease or Git mutation enabled.'
+      return
+    }
+    if ($NativeRootClaims) {
+      foreach ($migration in @('0015_worktree_target_holds.sql','0016_worktree_provisioner_attempts.sql','0017_capability_readiness.sql','0018_project_profile_proposals.sql','0019_provisioner_process_journal.sql')) {
+        Invoke-AcpSqlFile ('packages/storage/migrations/' + $migration) ('Native root prerequisite: ' + $migration)
+      }
+      if ($NativeRootClaims -notin @('upgrade','conflict')) { Invoke-AcpSqlFile 'packages/storage/migrations/0020_windows_native_root_claims.sql' '0020 shared recorded native root exclusion' }
+      if ($NativeRootClaims -eq 'legacy') {
+        Invoke-AcpNodeCheck 'packages/storage/test/integration/native-root-legacy.ts' 'Unscoped history after native-root projection upgrade' 'after' -TimeoutSeconds 30
+      } elseif ($NativeRootClaims -eq 'regression') {
+        Invoke-AcpNodeCheck 'packages/storage/test/integration/provisioner-journal.ts' 'Provisioner journal regression under0020' 'core' -TimeoutSeconds 30
+        Invoke-AcpNodeCheck 'packages/storage/test/integration/worker-launch-recovery.ts' 'Worker launch recovery regression under0020' -TimeoutSeconds 30
+      } else {
+        Invoke-AcpNodeCheck 'packages/storage/test/integration/native-root-claims.ts' 'Recorded native root claim integration' $NativeRootClaims -TimeoutSeconds 30
+      }
+      Write-Host 'Focused root-claim phase passed; recorded exclusion is not native execution or recovery proof.'
       return
     }
     if ($ProvisionerJournal) {

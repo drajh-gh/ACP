@@ -106,6 +106,8 @@ recovery claims, fresh-ACK execution admission, restricted parent/common-metadat
 write authority and gap-free conversion remain prerequisites before execution
 or recovery consumes these records. Native code must independently verify the
 exact fence, PID token, job membership and descendant-empty closure before acting.
+The subsequent shared recorded-root exclusion prerequisite is specified in
+[ADR0024](0024-native-root-claims.md); it supplies no native consumer or GO authority.
 
 The focused `ProvisionerJournal` gate has separate core, races, expiry, upgrade
 and predecessor-regression phases under the existing 30-second child and

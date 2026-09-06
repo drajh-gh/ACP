@@ -86,6 +86,9 @@ deployed autonomous service.
 - an independent append-only provisioner process/sealed-stop claim ledger with
   exact native 100ns root identity, original-owner admission, permanent stop-first
   denial and historical replay; no native consumer, GO or hold release is wired
+- shared, immutable Windows root claims across worker/provisioner process and
+  rooted-stop history, with numeric FILETIME alias exclusion and deterministic
+  backfill; unscoped legacy history is retained without invented identity
 - immutable node-context revisions and identity-only, transactionally assembled
   context packets, with current-reference checks, exact retry/deadline admission,
   and cancellation fencing

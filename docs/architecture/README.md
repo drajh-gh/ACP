@@ -33,3 +33,4 @@ explain how its fixed technology choices shape the repository.
 | [0021](0021-retained-profile-proposals.md) | Retained inert profile-proposal history |
 | [0022](0022-native-provisioner-fence.md) | Native-only permanent provisioner fencing |
 | [0023](0023-inert-provisioner-journal.md) | Inert provisioner process and sealed-stop journal |
+| [0024](0024-native-root-claims.md) | Shared recorded Windows root exclusion |
