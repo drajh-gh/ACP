@@ -1,6 +1,7 @@
 import { parseStableId, type StableId } from "@acp/domain";
 import type { Pool, QueryResultRow } from "pg";
-import { withTransaction, type QueryExecutor } from "./database.ts";
+import type { QueryExecutor } from "./database.ts";
+import { withIsolatedTransaction } from "./isolated-transaction.ts";
 import { PostgresDispatchStore, type HostRuntimeRegistration } from "./dispatch-store.ts";
 import type { WorkerRecoveryAuthority } from "./worker-recovery-store.ts";
 import { parseWorkerLaunchIntent, type WorkerLaunchIntent } from "./worker-launch-intent.ts";
@@ -70,7 +71,7 @@ export class PostgresFilesystemWriterStore {
   /** Exact retries only read history. They never renew an old or released lease. */
   async reserve(value: FilesystemWriterReservation): Promise<FilesystemWriterLease> {
     const input = parseFilesystemWriterReservation(value), a = this.authority;
-    return withTransaction(this.pool, async (client) => {
+    return withIsolatedTransaction(this.pool, async (client) => {
       await client.query("SELECT acp.lock_filesystem_writer($1,$2)", [input.runId, input.worktreeBindingId]);
       const existing = (await client.query("SELECT * FROM acp.filesystem_writer_lease_status WHERE lease_id=$1 OR run_id=$2", [input.leaseId, input.runId])).rows[0];
       if (existing) {
@@ -135,7 +136,7 @@ export class PostgresFilesystemWriterStore {
   /** A failed or uncertain renewal must be treated as lost authority by future OS consumers. */
   async heartbeat(leaseId: StableId<"lease">): Promise<FilesystemWriterLease> {
     parseStableId(leaseId, "lease"); const a = this.authority;
-    return withTransaction(this.pool, async (client) => {
+    return withIsolatedTransaction(this.pool, async (client) => {
       const l = await this.required(client, leaseId);
       await client.query("SELECT acp.lock_filesystem_writer($1,$2)", [l.runId,l.worktreeBindingId]);
       const renewed = await client.query(`UPDATE acp.filesystem_writer_leases SET heartbeat_at=clock_timestamp()
@@ -148,7 +149,7 @@ export class PostgresFilesystemWriterStore {
   /** Only terminal, durably sealed/stopped runs can release; exact retries are historical reads. */
   async release(leaseId: StableId<"lease">): Promise<FilesystemWriterLease> {
     parseStableId(leaseId, "lease"); const a = this.authority;
-    return withTransaction(this.pool, async (client) => {
+    return withIsolatedTransaction(this.pool, async (client) => {
       const l = await this.required(client, leaseId);
       await client.query("SELECT acp.lock_filesystem_writer($1,$2)", [l.runId,l.worktreeBindingId]);
       await client.query("SELECT 1 FROM acp.filesystem_writer_leases WHERE lease_id=$1 FOR UPDATE", [leaseId]);

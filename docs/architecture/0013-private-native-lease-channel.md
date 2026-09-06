@@ -131,6 +131,16 @@ which bypasses child `finally`. No empty-job evidence means the fixture is
 preserved. Two cleanup probes cover forced stop and an exited root with a live
 detached descendant; root exit alone cannot permit removal.
 
+Writer transactions now physically discard each checked-out database session.
+The real-connection fixture forwards socket events and the discard flag, then
+checks physical end and backend absence after public controller-quiescent closure.
+Initial admission uses one accepted heartbeat/one closed session; lost COMMIT ACK
+uses one committed heartbeat but zero accepted responses/one closed session;
+periodic cancellation uses four distinct sessions with three accepted COMMITs and
+one denied renewal. Closure still precedes durable sealed-stop/result/release,
+and readback cannot repair lost renewal authority. These bounded local scenarios
+do not qualify production connection-churn capacity or renewal latency.
+
 Native continuous path pins,
 restricted filesystem access, provisioning reservations, recovery and delivery
 transport admission remain separate prerequisites. No credentials, model calls,

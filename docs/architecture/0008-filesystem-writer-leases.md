@@ -54,6 +54,14 @@ then restart a fresh pass so newly changed or inserted earlier keys are revisite
 
 Store mutations lock mission → node → run → host session → host → launch intent,
 then repository → worktree → lease. Unique indexes serialize competing keys.
+Reservation, heartbeat and release now opt into physical-session containment:
+checked-out connection errors become sticky before/after every statement, the
+original failure survives a failed rollback, and every transaction (including
+successful historical replay) discards its physical connection. Callbacks are
+never replayed automatically and uncertain COMMITs remain rejected. Heartbeat
+readback is not the missing ACK and cannot restore native writer authority. An
+explicit exact release retry may confirm an already-retained terminal receipt,
+without another revision, provenance or event; it cannot renew or restart a run.
 Direct SQL updates can acquire the lease row before triggers take those locks;
 PostgreSQL may abort such an inverted transaction, never bypass a predicate.
 Retirement locks the corresponding binding and does not acquire lease locks.
@@ -62,5 +70,8 @@ This slice is durable ownership bookkeeping, not an OS fencing mechanism. A
 future owner must reobserve native identities and branch state under the lease,
 hold process isolation across writes, terminate on renewal loss, and validate its
 result before releasing. Provisioning requires a separate reservation protocol.
-No current worker launcher consumes these leases. Populated downgrade is refused
+The later opt-in native launcher channel is specified in
+[ADR0013](0013-private-native-lease-channel.md); it preserves stop-on-uncertain-ACK
+ordering with physical connection disposal. Local correctness gates do not establish
+production connection-capacity or renewal-latency suitability. Populated downgrade is refused
 even after release so ownership and release evidence cannot disappear.

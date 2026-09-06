@@ -98,9 +98,14 @@ try {
   const original=await writers.reserve({ leaseId,runId:a.start.runId,workerProcessId,worktreeBindingId:tree.worktreeBindingId,provenanceId:a.a.packetProvenanceId });
   assert.equal(original.revision,1);
   let dropped=0,commits=0;
+  const heartbeatSessions:{ pids:number[];ended:Promise<void>[];discards:(Error|boolean|undefined)[] }={ pids:[],ended:[],discards:[] };
   const responseLoss=new PostgresFilesystemWriterStore({ options:pool.options,query:pool.query.bind(pool),async connect() {
     const client=await pool.connect();
-    return { release:() => client.release(),async query<R extends QueryResultRow>(text:string,values?:unknown[]):Promise<QueryResult<R>> {
+    heartbeatSessions.pids.push(Number((await client.query("SELECT pg_backend_pid() AS pid")).rows[0].pid));
+    heartbeatSessions.ended.push(new Promise<void>((resolve)=>client.once("end",()=>resolve())));
+    return { on:client.on.bind(client),off:client.off.bind(client),release:(discard?:Error|boolean) => {
+      assert.equal(discard,true); assert.ok(client.listenerCount("error")>0); heartbeatSessions.discards.push(discard); client.release(discard);
+    },async query<R extends QueryResultRow>(text:string,values?:unknown[]):Promise<QueryResult<R>> {
       const result=await client.query<R>(text,values);
       if (text==="COMMIT") { commits++; if(phase==="lost-ack") { dropped++; throw new Error("injected loss of actual COMMIT response"); } }
       return result;
@@ -173,6 +178,11 @@ try {
   const expectedCommits=periodic ? 3 : 1;
   assert.equal(commits,expectedCommits); assert.equal(dropped,phase==="lost-ack" ? 1 : 0);
   assert.equal(inFlight,0); assert.equal(maximumInFlight,1);
+  await bounded(Promise.all(heartbeatSessions.ended),3000,"heartbeat physical sessions did not close after native quiescence");
+  assert.equal(attempts,periodic ? 4 : 1); assert.equal(accepted,phase==="lost-ack" ? 0 : expectedCommits);
+  assert.deepEqual(heartbeatSessions.discards,Array(attempts).fill(true)); assert.equal(new Set(heartbeatSessions.pids).size,attempts);
+  assert.equal((await pool.query("SELECT 1 FROM pg_stat_activity WHERE pid=ANY($1::int[])",[heartbeatSessions.pids])).rowCount,0);
+  if(phase==="lost-ack") { assert.equal(heartbeatErrors.length,1); assert.match(String(heartbeatErrors[0]),/actual COMMIT response/u); }
   let stoppedWrites:Buffer[]|undefined;
   if(periodic) {
     assert.equal(request.signal.aborted,false); assert.equal(attempts,4); assert.equal(accepted,3);
@@ -215,7 +225,7 @@ try {
   await registry.retireWorktree(tree.worktreeBindingId,await provenance(),"Disposable native channel scenario ended.");
   await registry.retireRepository(repository.repositoryBindingId,await provenance(),"Disposable native channel scenario ended.");
   await f.dispatches.closeRuntime(f.runtime.hostIdentifier,f.runtime.sessionId);
-  process.stdout.write(`PASS native writer channel ${phase}: actual journal before GO, quiescent sealed stop before result/release; ${commits} real heartbeat COMMIT, ${dropped} injected response loss\nNative writer channel integration: 1 scenario passed.\n`);
+  process.stdout.write(`PASS native writer channel ${phase}: actual journal before GO, quiescent sealed stop before result/release; ${commits} real heartbeat COMMIT, ${dropped} injected response loss, ${heartbeatSessions.discards.length} physically closed sessions\nNative writer channel integration: 1 scenario passed.\n`);
 } finally {
   resumeHeartbeat.resolve();
   try { await worker?.terminate().catch(() => {}); } finally {

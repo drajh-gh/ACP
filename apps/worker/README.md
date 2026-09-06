@@ -387,6 +387,23 @@ It excludes native observation, active-writer execution and all other mode flags
 Registry transactions discard their physical sessions and preserve uncertainty;
 they never authorize creation, deletion, renewal or automatic retry.
 
+Filesystem-writer reserve/heartbeat/release also discard their physical database
+sessions. An uncertain heartbeat COMMIT denies native authority even when readback
+shows a newer revision; an explicit exact release retry can only confirm retained
+terminal history. Verify active renewals with these separately bounded gates,
+sequentially (not in parallel):
+
+```powershell
+pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery -FilesystemBindings -FilesystemLeases -WorktreeReservations regression
+pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery -FilesystemBindings -FilesystemLeases -FilesystemLeaseChannelNative initial
+pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery -FilesystemBindings -FilesystemLeases -FilesystemLeaseChannelNative lost-ack
+pwsh -NoProfile -File scripts/check-postgres.ps1 -LifecycleOnly -LaunchRecovery -FilesystemBindings -FilesystemLeases -FilesystemLeaseChannelNative periodic-cancel
+```
+
+The native phases assert actual backend closure after controller quiescence and
+retain stop/result/release ordering. Disposable model-free writes do not prove a
+production filesystem sandbox or connection-churn capacity/latency suitability.
+
 `scripts/check-postgres.ps1` applies all eleven ACP migrations, tests real DBOS
 host queues and supervised admission (including a native synthetic runner on
 Windows), kills a journaled native owner and recovers its durable state, reverses

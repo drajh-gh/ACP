@@ -44,10 +44,21 @@ try {
       await s.finishOwner();
     } };
   }
-  function intercepted(mode: "lost_commit" | "close_before_commit") {
+  async function exclusion(leaseId: string) {
+    if (!(await pool.query("SELECT to_regclass('acp.filesystem_exclusion_keys') AS table_name")).rows[0].table_name) return undefined;
+    return (await pool.query("SELECT key FROM acp.filesystem_exclusion_keys WHERE writer_lease_id=$1 ORDER BY key",[leaseId])).rows;
+  }
+  function intercepted(mode: "lost_commit" | "close_before_commit",
+    evidence?: { releases: (Error|boolean|undefined)[]; ended: Promise<void>[]; pids: number[] }) {
     return new PostgresFilesystemWriterStore({ options: pool.options,async connect() {
       const client = await pool.connect();
-      return { release: () => client.release(),async query<R extends QueryResultRow>(text: string,values?: unknown[]): Promise<QueryResult<R>> {
+      if (evidence) {
+        evidence.pids.push(Number((await client.query("SELECT pg_backend_pid() AS pid")).rows[0].pid));
+        evidence.ended.push(new Promise<void>((resolve)=>client.once("end",()=>resolve())));
+      }
+      return { on: client.on.bind(client),off: client.off.bind(client),release: (discard?: Error|boolean) => {
+        assert.equal(discard,true); assert.ok(client.listenerCount("error")>0); evidence?.releases.push(discard); client.release(discard);
+      },async query<R extends QueryResultRow>(text: string,values?: unknown[]): Promise<QueryResult<R>> {
         if (text === "COMMIT" && mode === "close_before_commit") await client.query("UPDATE acp.worker_host_sessions SET state='closed' WHERE host_identifier=$1",[f.runtime.hostIdentifier]);
         const result = await client.query<R>(text,values);
         if (text === "COMMIT" && mode === "lost_commit") throw new Error("synthetic lost commit acknowledgement");
@@ -55,6 +66,66 @@ try {
       } };
     } } as unknown as Pool,f.runtime);
   }
+  await check("killed writer sessions release exact locks without partial acquisition, renewal or release",async()=>{
+    for (const operation of ["reserve","heartbeat","release"] as const) {
+      const x=await fixture();
+      if(operation!=="reserve") await store.reserve(x.reservation);
+      if(operation==="release") { await x.stop(); await x.finishRun(); }
+      const before=await store.load(x.reservation.leaseId),keys=await exclusion(x.reservation.leaseId);
+      const events=(await pool.query("SELECT event_id FROM acp.mission_events WHERE mission_id=$1 AND event_type LIKE 'filesystem.writer-%' ORDER BY event_id",[x.a.missionId])).rows;
+      const releases:(Error|boolean|undefined)[]=[],queries:string[]=[];
+      let backendPid=0,ended:Promise<void>|undefined;
+      const killed=new PostgresFilesystemWriterStore({ options:pool.options,async connect() {
+        const client=await pool.connect();
+        backendPid=Number((await client.query("SELECT pg_backend_pid() AS pid")).rows[0].pid);
+        const failed=new Promise<void>((resolve)=>client.once("error",()=>resolve()));
+        ended=new Promise<void>((resolve)=>client.once("end",()=>resolve()));
+        return { on:client.on.bind(client),off:client.off.bind(client),release:(discard?:Error|boolean)=>{ releases.push(discard); client.release(discard); },
+          async query<R extends QueryResultRow>(text:string,values?:unknown[]):Promise<QueryResult<R>> {
+            queries.push(text); const result=await client.query<R>(text,values);
+            if(text.includes("lock_filesystem_writer")) {
+              assert.equal((await pool.query("SELECT pg_terminate_backend($1) AS stopped",[backendPid])).rows[0].stopped,true);
+              await failed;
+            }
+            return result;
+          } };
+      } } as unknown as Pool,f.runtime);
+      await assert.rejects(operation==="reserve" ? killed.reserve(x.reservation) : killed[operation](x.reservation.leaseId),/terminating connection|connection terminated/iu);
+      await ended; assert.deepEqual(releases,[true]); assert.equal(queries.length,operation==="reserve" ? 2 : 3);
+      assert.match(queries.at(-1)!,/lock_filesystem_writer/u);
+      assert.equal((await pool.query("SELECT 1 FROM pg_stat_activity WHERE pid=$1",[backendPid])).rowCount,0);
+      await pool.query("SELECT acp.lock_filesystem_writer($1,$2)",[x.reservation.runId,x.reservation.worktreeBindingId]);
+      assert.deepEqual(await store.load(x.reservation.leaseId),before); assert.deepEqual(await exclusion(x.reservation.leaseId),keys);
+      assert.deepEqual((await pool.query("SELECT event_id FROM acp.mission_events WHERE mission_id=$1 AND event_type LIKE 'filesystem.writer-%' ORDER BY event_id",[x.a.missionId])).rows,events);
+      assert.equal((await pool.query("SELECT 1 FROM acp.filesystem_writer_releases WHERE lease_id=$1",[x.reservation.leaseId])).rowCount,0);
+      const retry=operation==="reserve" ? await store.reserve(x.reservation) : await store[operation](x.reservation.leaseId);
+      assert.equal(retry.revision,operation==="reserve" ? 1 : 2);
+    }
+  });
+  await check("lost real BEGIN response and unavailable rollback discard the writer session and its exact locks",async()=>{
+    const x=await fixture(),failure=new Error("synthetic lost writer BEGIN acknowledgement"),releases:(Error|boolean|undefined)[]=[],queries:string[]=[];
+    let backendPid=0,ended:Promise<void>|undefined;
+    const uncertain=new PostgresFilesystemWriterStore({ options:pool.options,async connect() {
+      const client=await pool.connect();
+      backendPid=Number((await client.query("SELECT pg_backend_pid() AS pid")).rows[0].pid);
+      ended=new Promise<void>((resolve)=>client.once("end",()=>resolve()));
+      return { on:client.on.bind(client),off:client.off.bind(client),release:(discard?:Error|boolean)=>{ releases.push(discard); client.release(discard); },
+        async query<R extends QueryResultRow>(text:string,values?:unknown[]):Promise<QueryResult<R>> {
+          queries.push(text);
+          if(text==="ROLLBACK") throw new Error("synthetic unavailable writer rollback");
+          const result=await client.query<R>(text,values);
+          if(text==="BEGIN") { await client.query("SELECT acp.lock_filesystem_writer($1,$2)",[x.reservation.runId,x.reservation.worktreeBindingId]); throw failure; }
+          return result;
+        } };
+    } } as unknown as Pool,f.runtime);
+    await assert.rejects(uncertain.reserve(x.reservation),(error)=>error===failure); await ended;
+    assert.deepEqual(releases,[true]); assert.deepEqual(queries,["BEGIN","ROLLBACK"]);
+    assert.equal((await pool.query("SELECT 1 FROM pg_stat_activity WHERE pid=$1",[backendPid])).rowCount,0);
+    await pool.query("SELECT acp.lock_filesystem_writer($1,$2)",[x.reservation.runId,x.reservation.worktreeBindingId]);
+    assert.equal(await store.load(x.reservation.leaseId),undefined); assert.equal((await exclusion(x.reservation.leaseId))?.length??0,0);
+    assert.equal((await pool.query("SELECT 1 FROM acp.mission_events WHERE mission_id=$1 AND event_type LIKE 'filesystem.writer-%'",[x.a.missionId])).rowCount,0);
+    assert.equal((await store.reserve(x.reservation)).revision,1);
+  });
   await check("database-derived ownership, bounded renewal and exact concurrent replay",async () => {
     const x = await fixture();
     const [left,right] = await Promise.all([store.reserve(x.reservation),store.reserve(x.reservation)]);
@@ -137,14 +208,23 @@ try {
     await assert.rejects(store.heartbeat(y.reservation.leaseId),/exact live delivery/u);
   });
   await check("lost acquisition, renewal and release acknowledgements keep one durable history",async () => {
-    const x = await fixture(), uncertain = intercepted("lost_commit");
+    const evidence:{ releases:(Error|boolean|undefined)[];ended:Promise<void>[];pids:number[] }={ releases:[],ended:[],pids:[] };
+    const x = await fixture(), uncertain = intercepted("lost_commit",evidence);
     await assert.rejects(uncertain.reserve(x.reservation),/lost commit/u);
     assert.equal((await store.reserve(x.reservation)).revision,1);
     await assert.rejects(uncertain.heartbeat(x.reservation.leaseId),/lost commit/u);
     assert.equal((await store.load(x.reservation.leaseId))?.revision,2);
     await x.stop(); await x.finishRun(); await assert.rejects(uncertain.release(x.reservation.leaseId),/lost commit/u);
+    const receipt=(await pool.query("SELECT * FROM acp.filesystem_writer_releases WHERE lease_id=$1",[x.reservation.leaseId])).rows;
+    assert.equal(receipt.length,1);
+    const provenanceCount=(await pool.query("SELECT count(*)::int AS count FROM acp.runtime_provenance")).rows[0].count;
     assert.equal((await store.release(x.reservation.leaseId)).revision,3);
-    assert.equal((await pool.query("SELECT 1 FROM acp.filesystem_writer_releases WHERE lease_id=$1",[x.reservation.leaseId])).rowCount,1);
+    assert.deepEqual((await pool.query("SELECT * FROM acp.filesystem_writer_releases WHERE lease_id=$1",[x.reservation.leaseId])).rows,receipt);
+    assert.equal((await pool.query("SELECT count(*)::int AS count FROM acp.runtime_provenance")).rows[0].count,provenanceCount);
+    assert.deepEqual((await pool.query("SELECT event_type FROM acp.mission_events WHERE mission_id=$1 AND event_type LIKE 'filesystem.writer-%' ORDER BY occurred_at",[x.a.missionId])).rows.map((row)=>row.event_type),
+      ["filesystem.writer-acquired","filesystem.writer-renewed","filesystem.writer-released"]);
+    await Promise.all(evidence.ended); assert.deepEqual(evidence.releases,[true,true,true]); assert.equal(new Set(evidence.pids).size,3);
+    assert.equal((await pool.query("SELECT 1 FROM pg_stat_activity WHERE pid=ANY($1::int[])",[evidence.pids])).rowCount,0);
   });
   await check("durable cancellation intent denies renewal without releasing an unsealed writer",async () => {
     const x = await fixture(); await store.reserve(x.reservation);
