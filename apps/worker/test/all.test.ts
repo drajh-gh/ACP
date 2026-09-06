@@ -18,6 +18,7 @@ import "./windows-filesystem-lease-channel.test.ts";
 import "./bounded-json.test.ts";
 import "./windows-provisioner-channel.test.ts";
 import "./native-provisioner-plan.test.ts";
+import "./native-provisioner-executor.test.ts";
 import "./windows-provisioner-process.test.ts";
 import "./npm-package-manifest-discovery.test.ts";
 import "./npm-manifest-discovery-coordinator.test.ts";

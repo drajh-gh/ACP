@@ -314,6 +314,12 @@ The private `provisioner-runner` suite requires one exact bounded phase:
 controller ordering with synthetic database ports and a fixed model-free capsule.
 No Git mutation, restricted filesystem access or production dispatch is enabled.
 See [the owned runner contract](docs/architecture/0030-owned-provisioner-process-runner.md).
+The database/native executor adds three isolated phases. Run each sequentially:
+`pwsh -NoProfile -File scripts/check-postgres.ps1 -ProvisionerAdmissions native-happy`,
+then substitute `native-lost-ack` and `native-hold-invalidated`. These use actual
+PostgreSQL admission and Windows ownership with a fixed non-mutating capsule;
+they preserve target holds and do not enable production provisioning. See
+[the stored-plan executor contract](docs/architecture/0031-stored-plan-provisioner-executor.md).
 The three `FilesystemLeaseChannelNative` phases are focused, model-free real
 database/native lifecycle checks. Each applies the seeded schema through 0014,
 then runs only its selected scenario; predecessor suites remain separate gates.

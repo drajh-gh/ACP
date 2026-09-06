@@ -19,7 +19,7 @@ param(
   [string]$ProvisionerPlans,
   [ValidateSet('core', 'races', 'expiry', 'upgrade', 'regression')]
   [string]$ProvisionerJournal,
-  [ValidateSet('core', 'races', 'expiry', 'sessions', 'upgrade', 'regression', 'controller')]
+  [ValidateSet('core', 'races', 'expiry', 'sessions', 'upgrade', 'regression', 'controller', 'native-happy', 'native-lost-ack', 'native-hold-invalidated')]
   [string]$ProvisionerAdmissions,
   [ValidateSet('core', 'races', 'upgrade', 'conflict', 'legacy', 'regression')]
   [string]$NativeRootClaims,
@@ -144,7 +144,7 @@ if (-not $Internal) {
   $ownedTreeStopped = $false
 
   try {
-    if ($FilesystemLeaseChannelNative) {
+    if ($FilesystemLeaseChannelNative -or $ProvisionerAdmissions -in @('native-happy', 'native-lost-ack', 'native-hold-invalidated')) {
       $pendingChannelRoot = Get-AcpNativeChannelRoot $outerRunId
       New-Item -ItemType Directory -Path $pendingChannelRoot -ErrorAction Stop | Out-Null
       $channelRoot = $pendingChannelRoot
@@ -347,6 +347,10 @@ try {
     if ($FilesystemLeaseChannelNative -and $RelativePath -eq 'packages/storage/test/integration/filesystem-native-channel.ts') {
       $checkStartInfo.Environment['ACP_TEST_NATIVE_CHANNEL_ROOT'] = Get-AcpNativeChannelRoot $RunId
     }
+    if ($ProvisionerAdmissions -in @('native-happy', 'native-lost-ack', 'native-hold-invalidated') -and $RelativePath -eq 'apps/worker/test/integration/provisioner-executor.ts') {
+      $checkStartInfo.Environment['ACP_TEST_NATIVE_CHANNEL_ROOT'] = Get-AcpNativeChannelRoot $RunId
+      $checkStartInfo.Environment['ACP_TEST_PWSH'] = (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source
+    }
     foreach ($argument in @('--experimental-strip-types', $RelativePath, $checkPort)) {
       $checkStartInfo.ArgumentList.Add($argument)
     }
@@ -403,13 +407,17 @@ try {
       if ($ProvisionerAdmissions -ne 'upgrade') { Invoke-AcpSqlFile 'packages/storage/migrations/0021_provisioner_admissions.sql' '0021 fresh-only provisioner admissions' }
       if ($ProvisionerAdmissions -eq 'controller') {
         Invoke-AcpNodeCheck 'apps/worker/test/integration/provisioner-controller.ts' 'Database-bound synthetic provisioner controller integration' -TimeoutSeconds 30
+      } elseif ($ProvisionerAdmissions -in @('native-happy', 'native-lost-ack', 'native-hold-invalidated')) {
+        Invoke-AcpNodeCheck 'apps/worker/test/integration/provisioner-executor.ts' 'Database/native provisioner executor integration' $ProvisionerAdmissions -TimeoutSeconds 30
       } elseif ($ProvisionerAdmissions -eq 'regression') {
         Invoke-AcpNodeCheck 'packages/storage/test/integration/provisioner-journal.ts' 'Provisioner journal regression under0021' 'core' -TimeoutSeconds 30
         Invoke-AcpNodeCheck 'packages/storage/test/integration/native-root-claims.ts' 'Shared native root claims regression under0021' 'core' -TimeoutSeconds 30
       } else {
         Invoke-AcpNodeCheck 'packages/storage/test/integration/provisioner-admission.ts' 'Fresh-only provisioner admission integration' $ProvisionerAdmissions -TimeoutSeconds 30
       }
-      Write-Host 'Focused provisioner admission passed; native GO, Git mutation, success and hold release remain disabled.'
+      if ($ProvisionerAdmissions -in @('native-happy', 'native-lost-ack', 'native-hold-invalidated')) {
+        Write-Host 'Focused database/native provisioner phase passed with a fixed model-free capsule; Git mutation, success, hold release and production dispatch remain disabled.'
+      } else { Write-Host 'Focused provisioner admission passed; native GO, Git mutation, success and hold release remain disabled.' }
       return
     }
     if ($NativeRootClaims) {
