@@ -11,9 +11,9 @@ control endpoint. Set `ACP_MCP_BEARER_TOKEN` in the Codex host environment to
 the same high-entropy secret configured on the control API. Do not store that
 secret in this repository.
 
-This source package is version `0.3.0` and sends `X-ACP-Plugin-Version: 0.3.0`;
+This source package is version `0.4.0` and sends `X-ACP-Plugin-Version: 0.4.0`;
 the control API rejects a missing or incompatible version before tool dispatch.
-The API's default compatibility list retains `0.1.0` and `0.2.0` and admits `0.3.0`; an
+The API's default compatibility list retains `0.1.0`–`0.3.0` and admits `0.4.0`; an
 operator's explicit allowlist remains authoritative. Updating this source does
 not install the plugin, refresh a cache, or deploy the API.
 
@@ -35,3 +35,14 @@ Neither tool writes, discovers, confirms, publishes, activates or grants authori
 invalid or undisclosable results return no partial document. All tools
 use the existing trusted bearer-client boundary, not per-project user ACLs.
 They expose no credentials and do not execute external effects.
+
+The seventh tool, `get_mission_attention`, requires migration 0022. It reads an
+exact project's recorded attention queue with an optional exact mission filter,
+default 20 / maximum 50 items, and a canonical continuation cursor. Structured
+payloads are bounded to 64 KiB; malformed, oversized or undisclosable selected
+boundaries return no partial page. Evidence reachable through preview references,
+the cursor anchor and lookahead item are included in disclosure checks. No raw
+evidence body, effect preview body or private producer receipt is returned.
+Expired items remain recorded, freshness is not assessed and an empty page is
+not a global health signal. This read cannot acknowledge, resolve, approve,
+notify, execute quiet-hours policy or grant permission from a listed response.

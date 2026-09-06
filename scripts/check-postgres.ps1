@@ -17,7 +17,7 @@ param(
   [string]$CounterpartStatus,
   [ValidateSet('core', 'races', 'http')]
   [string]$CounterpartSessions,
-  [ValidateSet('core', 'races', 'references', 'snapshot', 'upgrade')]
+  [ValidateSet('core', 'races', 'references', 'snapshot', 'upgrade', 'http')]
   [string]$AttentionQueue,
   [ValidateSet('core', 'races', 'expiry', 'upgrade', 'regression')]
   [string]$ProvisionerPlans,
@@ -419,7 +419,11 @@ try {
       foreach ($migration in @('0015_worktree_target_holds.sql','0016_worktree_provisioner_attempts.sql','0017_capability_readiness.sql','0018_project_profile_proposals.sql','0019_provisioner_process_journal.sql','0020_windows_native_root_claims.sql','0021_provisioner_admissions.sql','0022_attention_items.sql')) {
         Invoke-AcpSqlFile ('packages/storage/migrations/' + $migration) ('Attention prerequisite: ' + $migration)
       }
-      Invoke-AcpNodeCheck 'packages/storage/test/integration/attention.ts' 'Recorded attention integration' $AttentionQueue -TimeoutSeconds 30
+      if ($AttentionQueue -eq 'http') {
+        Invoke-AcpNodeCheck 'apps/control-api/test/integration/attention.ts' 'Recorded attention PostgreSQL/HTTP integration' -TimeoutSeconds 30
+      } else {
+        Invoke-AcpNodeCheck 'packages/storage/test/integration/attention.ts' 'Recorded attention integration' $AttentionQueue -TimeoutSeconds 30
+      }
       Write-Host 'Focused recorded attention phase passed; no decisions, notifications, effect execution or readiness inference.'
       return
     }

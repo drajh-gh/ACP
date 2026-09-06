@@ -1,6 +1,6 @@
 ---
 name: counterpart
-description: Create and inspect durable Agentic Control Plane missions, recorded project capability readiness, and inert profile proposals or complete profile review requests when the user asks ACP to take on, continue, report or review work and configuration.
+description: Create and inspect durable Agentic Control Plane missions, recorded attention and capability readiness, and inert profile proposals or complete review requests when the user asks ACP to take on, continue, report or review work and configuration.
 ---
 
 # ACP Counterpart
@@ -27,6 +27,25 @@ history.
   project-level overview.
 - Keep mission, candidate, deployment, acceptance, tracker, effect, and
   business-completion facts separate. Never translate one into another.
+
+## Inspect recorded attention
+
+1. Establish the exact ACP project ID and, for a mission-filtered queue, the exact
+   mission ID. Call `get_mission_attention`; it defaults to 20 items, at most 50.
+   Do not create a mission merely to read attention or guess an ID from a name.
+2. Preserve the item's type, urgency, why a person is needed, evidence references,
+   options and consequences. Report expiry at the returned `asOf`; expired is not
+   resolved. Allowed responses and quiet-hours disposition are recorded text, not
+   executable controls, notification instructions or permission to act.
+3. Continue only with the returned `nextCursor` in the same project/mission scope.
+   Separate pages need not share one snapshot. If the tool fails, report that the
+   whole requested page is unavailable; do not infer hidden items, silently shrink
+   the page or substitute a cursor. An empty page proves neither readiness nor
+   absence of unrecorded problems. Freshness remains `not_assessed`.
+4. Treat `exact_approval_requested` as a recorded request, not an approval envelope
+   or a currently usable approval card. This tool cannot acknowledge, resolve,
+   approve, reject, notify, schedule quiet hours or execute a listed response.
+   Present decision-ready content as data; retain the separate authorization path.
 
 ## Inspect recorded readiness
 

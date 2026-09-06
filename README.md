@@ -16,8 +16,9 @@ deployed autonomous service.
   and reconciliation contracts
 - a bounded recorded attention contract and immutable canonical/request-alias
   ledger with project-key deduplication, exact historical replay and single-snapshot
-  queue reads; disclosure includes indirect preview evidence and pagination
-  lookahead, with no decisions, notifications, public writer or readiness inference
+  queue reads through authenticated `get_mission_attention`; disclosure includes
+  indirect preview evidence and pagination lookahead, with no decisions,
+  notifications, public writer or readiness inference
 - an additive recorded readiness matrix with exact profile/resource identity,
   microsecond expiry, persistent revocation semantics, immutable assessment/evidence
   pins and bounded single-snapshot reads exposed through authenticated read-only

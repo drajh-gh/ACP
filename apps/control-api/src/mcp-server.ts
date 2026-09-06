@@ -9,6 +9,7 @@ import type { CounterpartMissionPersistence } from "@acp/storage";
 import { z } from "zod";
 import { registerReadinessTool } from "./readiness-tool.ts";
 import { registerProfileProposalTools } from "./profile-proposal-tool.ts";
+import { registerAttentionTool } from "./attention-tool.ts";
 import { controlApiVersion } from "./config.ts";
 
 const stableId = (prefix: string) =>
@@ -185,6 +186,7 @@ export function createCounterpartMcpServer(
 
   registerReadinessTool(server, persistence);
   registerProfileProposalTools(server, persistence);
+  registerAttentionTool(server, persistence);
   return server;
 }
 

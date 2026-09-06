@@ -6,6 +6,7 @@ import {
   type StableId,
   type ProjectReadinessQuery,
   type ProjectProfileProposalQuery,
+  type AttentionQueueQuery,
 } from "@acp/domain";
 import type { QueryResultRow } from "pg";
 
@@ -13,6 +14,7 @@ import type { ConnectionPool, QueryExecutor } from "./database.ts";
 import { withIsolatedTransaction } from "./isolated-transaction.ts";
 import { counterpartMissionStatusSql } from "./counterpart-status-query.ts";
 import { getProjectReadiness as readProjectReadiness, type ProjectReadinessPersistence } from "./readiness-store.ts";
+import { getAttentionQueue as readAttentionQueue, type AttentionQueuePersistence } from "./attention-store.ts";
 import { getProjectProfileProposal as readProjectProfileProposal, getProfileConfirmationRequest as readProfileConfirmationRequest,
   type ProjectProfileProposalPersistence } from "./profile-proposal-store.ts";
 import { counterpartStatusCollectionLimit,counterpartStatusEnvironmentLimit,counterpartStatusMaximumBytes,
@@ -29,7 +31,7 @@ export interface CounterpartMissionCreate {
   readonly workflowKey?: string;
 }
 
-export interface CounterpartMissionPersistence extends ProjectReadinessPersistence, ProjectProfileProposalPersistence {
+export interface CounterpartMissionPersistence extends ProjectReadinessPersistence, ProjectProfileProposalPersistence, AttentionQueuePersistence {
   createMission(input: CounterpartMissionCreate): Promise<CounterpartMissionCreation>;
   getMission(
     missionId: StableId<"mission">,
@@ -311,6 +313,10 @@ export class PostgresCounterpartMissionStore
 
   async getProjectReadiness(query: ProjectReadinessQuery) {
     return readProjectReadiness(this.pool, query);
+  }
+
+  async getAttentionQueue(query: AttentionQueueQuery) {
+    return readAttentionQueue(this.pool, query);
   }
   async getProjectProfileProposal(query: ProjectProfileProposalQuery) {
     return readProjectProfileProposal(this.pool, query);

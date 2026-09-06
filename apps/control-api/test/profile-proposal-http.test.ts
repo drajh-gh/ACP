@@ -45,9 +45,9 @@ function denied(result:Awaited<ReturnType<Client["callTool"]>>) {
 }
 
 describe("inert profile review MCP",()=>{
-  for(const version of ["0.1.0","0.2.0","0.3.0"]) it(`exposes two read-only exact document tools to compatible plugin ${version}`,async()=>{
+  for(const version of ["0.1.0","0.2.0","0.3.0","0.4.0"]) it(`exposes two read-only exact document tools to compatible plugin ${version}`,async()=>{
     await withClient(async(client,data)=>{
-      assert.deepEqual(client.getServerVersion(),{ name:"acp-control",version:"0.3.0" });
+      assert.deepEqual(client.getServerVersion(),{ name:"acp-control",version:"0.4.0" });
       const listed=(await client.listTools()).tools;
       for(const name of tools) {
         const tool=listed.find(tool=>tool.name===name); assert.ok(tool);
@@ -64,13 +64,13 @@ describe("inert profile review MCP",()=>{
       assert.equal(data.reads(),2); assert.equal(data.mutations(),0);
     },version);
   });
-  it("preserves explicit version admission and aligns the source package with six tools",async()=>{
+  it("preserves explicit version admission and aligns the source package with seven tools",async()=>{
     await assert.rejects(withClient(async()=>assert.fail("unexpected dispatch"),"0.3.0",["0.2.0"]),error=>error instanceof Error&&"code" in error&&error.code===426);
     await assert.rejects(withClient(async()=>assert.fail("unexpected dispatch"),"0.2.0",["0.3.0"]),error=>error instanceof Error&&"code" in error&&error.code===426);
     const manifest=JSON.parse(await readFile(new URL("../../../plugins/codex-counterpart/.codex-plugin/plugin.json",import.meta.url),"utf8"));
     const mcp=JSON.parse(await readFile(new URL("../../../plugins/codex-counterpart/.mcp.json",import.meta.url),"utf8"));
-    assert.equal(manifest.version,"0.3.0"); assert.equal(mcp.mcpServers["acp-control"].http_headers["X-ACP-Plugin-Version"],manifest.version);
-    assert.deepEqual(mcp.mcpServers["acp-control"].enabled_tools.slice().sort(),["create_mission","get_mission_status","get_profile_confirmation_request","get_project_profile_proposal","get_project_readiness","list_active_missions"]);
+    assert.equal(manifest.version,"0.4.0"); assert.equal(mcp.mcpServers["acp-control"].http_headers["X-ACP-Plugin-Version"],manifest.version);
+    assert.deepEqual(mcp.mcpServers["acp-control"].enabled_tools.slice().sort(),["create_mission","get_mission_attention","get_mission_status","get_profile_confirmation_request","get_project_profile_proposal","get_project_readiness","list_active_missions"]);
   });
   it("rejects invented selectors and action fields before either persistence call",async()=>{
     await withClient(async(client,data)=>{
@@ -115,7 +115,7 @@ describe("inert profile review MCP",()=>{
     try {
       await new Promise<void>((resolve,reject)=>{ server.once("error",reject); server.listen(0,"127.0.0.1",resolve); });
       const base=`http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-      assert.deepEqual(await (await fetch(`${base}/healthz`)).json(),{ status:"ok",version:"0.3.0" });
+      assert.deepEqual(await (await fetch(`${base}/healthz`)).json(),{ status:"ok",version:"0.4.0" });
       for(const name of tools) {
         const result=await fetch(`${base}/mcp`,{ method:"POST",headers:{ "Content-Type":"application/json","X-ACP-Plugin-Version":"0.3.0" },
           body:JSON.stringify({ jsonrpc:"2.0",id:1,method:"tools/call",params:{ name,arguments:data.query } }) });

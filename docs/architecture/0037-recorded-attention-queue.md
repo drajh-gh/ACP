@@ -1,6 +1,6 @@
 # 0037 — Recorded attention queue, separate from decisions and notifications
 
-Status: Domain contract and durable recording/read projection implemented. MCP reads are next.
+Status: Domain contract, durable recording/read projection and read-only MCP tool implemented.
 
 Specification §19 defines twelve attention types and decision-ready item fields;
 §31.1 names the mission-attention read surface. This local slice advances M5
@@ -73,6 +73,24 @@ effect preview. Stale or inaccessible evidence is retained as recorded context,
 not promoted to fresh or usable evidence. Reads need SELECT only, take no row locks
 and mutate no state. Separate pages need not share a database snapshot.
 
+## Authenticated counterpart read
+
+`get_mission_attention` exposes the exact project queue with optional mission and
+canonical cursor through the existing authenticated, Origin-checked control API.
+It is the underscore-named MCP implementation of §31.1's `missions.get_attention`.
+It returns `{ attention }`, reparses the entire detached domain queue, and bounds
+the complete structured envelope to 64 KiB. Any unknown scope, invalid cursor,
+private persistence error, malformed result or overflow yields one generic error
+without structured content or a smaller substitute page. Source metadata, preview
+bodies and private producer receipts are not included.
+
+The advertised API and repository plugin advance to `0.4.0`; default admission
+retains `0.1.0`–`0.3.0`. Explicit operator compatibility lists remain authoritative.
+The seventh tool is allowlisted in the source plugin and its counterpart skill
+preserves recorded-only meaning. This is the shared trusted bearer-client boundary,
+not console OAuth or a per-user/project ACL. No marketplace entry, installation,
+cache refresh, deployment or configured live credential is changed.
+
 ## Non-goals and evidence
 
 No acknowledgement, resolution, recurrence, approval decision, notification,
@@ -97,3 +115,14 @@ reproduced future producer admission, fresh receipt attribution substitution and
 lookahead-only disclosure before their fixes. Independent read-only review passes
 the corrected SQL and TypeScript boundary. These tests do not prove a deployment,
 trusted prose redaction, a per-user/project ACL or an executed human decision.
+
+Eleven HTTP cases cover all types and four compatible plugin versions, exact
+query/response identity, action-field rejection, private-error containment,
+unsafe-object hooks, and a domain-valid queue whose wrapper exceeds 64 KiB.
+The initial positive route cases failed because no attention tool was registered;
+the new-version requests were also refused before implementation. Six additional
+actual PostgreSQL/HTTP checks verify SELECT-only execution, one query/no transaction
+connect, complete pagination, absent/foreign scope errors, restricted lookahead,
+source/provenance privacy and zero SQL for invalid or unauthenticated calls.
+Independent read-only review found no decisive MCP defect. All 768 local tests,
+TypeScript, secret scanning and whitespace checks pass.
