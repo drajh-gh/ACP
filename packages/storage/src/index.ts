@@ -22,5 +22,6 @@ export * from "./worktree-provisioner-attempt.ts";
 export * from "./worktree-provisioner-store.ts";
 export * from "./provisioner-journal.ts";
 export * from "./provisioner-journal-store.ts";
+export * from "./provisioner-admission-store.ts";
 export * from "./readiness-store.ts";
 export * from "./profile-proposal-store.ts";

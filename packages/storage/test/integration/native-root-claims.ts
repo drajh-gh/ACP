@@ -90,7 +90,8 @@ try {
     const y=await target(); await journal.recordProcess(y.input); const before=await claim(y.input.attemptId);
     await journal.recordStop(y.stop); assert.deepEqual(await claim(y.input.attemptId),before);
     await journal.recordProcess(y.input); await journal.recordStop(y.stop); assert.deepEqual(await claim(y.input.attemptId),before);
-    for(const sql of ["UPDATE acp.windows_native_root_claims SET process_id=process_id","DELETE FROM acp.windows_native_root_claims","TRUNCATE acp.windows_native_root_claims"]) await assert.rejects(pool.query(sql),/append-only/u);
+    for(const sql of ["UPDATE acp.windows_native_root_claims SET process_id=process_id","DELETE FROM acp.windows_native_root_claims","TRUNCATE acp.windows_native_root_claims CASCADE"]) await assert.rejects(pool.query(sql),/append-only/u);
+    await assert.rejects(pool.query("TRUNCATE acp.windows_native_root_claims"),/append-only|foreign key constraint/u);
   });
   await check("rooted stop-only history claims identity while rootless absence fabricates nothing",async()=>{
     const x=await target(); await journal.recordStop(x.stop); assert.equal((await claim(x.input.attemptId)).owner_kind,"provisioner");

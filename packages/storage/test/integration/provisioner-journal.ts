@@ -148,7 +148,10 @@ try {
       const x=await target(); await journal.recordProcess(x.input); await journal.recordStop(x.stop); const before=await journal.load(x.plan.attemptId);
       for(const table of ["worktree_provisioner_processes","worktree_provisioner_stops"]) {
         for(const sql of [`UPDATE acp.${table} SET root_process_id=1 WHERE attempt_id=$1`,`DELETE FROM acp.${table} WHERE attempt_id=$1`]) await assert.rejects(pool.query(sql,[x.plan.attemptId]),/append-only/u);
-        await assert.rejects(pool.query(`TRUNCATE acp.${table}`),/append-only/u);
+        // Under0021 the deferred admission pair rejects a plain process
+        // TRUNCATE before statement triggers; CASCADE must remain immutable too.
+        await assert.rejects(pool.query(`TRUNCATE acp.${table}`),/append-only|foreign key constraint/u);
+        await assert.rejects(pool.query(`TRUNCATE acp.${table} CASCADE`),/append-only/u);
       }
       await assert.rejects(migration("down"),/cannot downgrade retained/u); assert.deepEqual(await journal.load(x.plan.attemptId),before);
     });

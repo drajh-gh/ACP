@@ -13,6 +13,7 @@ import "./worktree-reservation.test.ts";
 import "./worktree-reservation-session.test.ts";
 import "./worktree-provisioner.test.ts";
 import "./provisioner-journal.test.ts";
+import "./provisioner-admission.test.ts";
 import "./provisioner-transaction.test.ts";
 import "./readiness-store.test.ts";
 import "./profile-proposal-store.test.ts";

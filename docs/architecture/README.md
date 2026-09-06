@@ -34,3 +34,4 @@ explain how its fixed technology choices shape the repository.
 | [0022](0022-native-provisioner-fence.md) | Native-only permanent provisioner fencing |
 | [0023](0023-inert-provisioner-journal.md) | Inert provisioner process and sealed-stop journal |
 | [0024](0024-native-root-claims.md) | Shared recorded Windows root exclusion |
+| [0025](0025-fresh-provisioner-admission.md) | Atomic fresh-only provisioner admission |

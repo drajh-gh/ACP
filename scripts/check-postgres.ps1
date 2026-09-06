@@ -19,6 +19,8 @@ param(
   [string]$ProvisionerPlans,
   [ValidateSet('core', 'races', 'expiry', 'upgrade', 'regression')]
   [string]$ProvisionerJournal,
+  [ValidateSet('core', 'races', 'expiry', 'sessions', 'upgrade', 'regression')]
+  [string]$ProvisionerAdmissions,
   [ValidateSet('core', 'races', 'upgrade', 'conflict', 'legacy', 'regression')]
   [string]$NativeRootClaims,
   [ValidateSet('core', 'races', 'expiry', 'limits', 'snapshot', 'upgrade', 'regression', 'http')]
@@ -34,6 +36,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+if ($ProvisionerAdmissions -and ($LifecycleOnly -or $HostOnly -or $LaunchRecovery -or $LaunchNative -or $FilesystemBindings -or $RepositoryBindingOnly -or $FilesystemNative -or $FilesystemLeases -or $FilesystemLeaseNative -or $FilesystemLeaseChannelNative -or $WorktreeReservations -or $MigrationSessions -or $CounterpartStatus -or $ProvisionerPlans -or $ProvisionerJournal -or $NativeRootClaims -or $Readiness -or $ProfileProposals)) { throw 'ProvisionerAdmissions is a standalone bounded gate' }
 if ($NativeRootClaims -and ($LifecycleOnly -or $HostOnly -or $LaunchRecovery -or $LaunchNative -or $FilesystemBindings -or $RepositoryBindingOnly -or $FilesystemNative -or $FilesystemLeases -or $FilesystemLeaseNative -or $FilesystemLeaseChannelNative -or $WorktreeReservations -or $MigrationSessions -or $CounterpartStatus -or $ProvisionerPlans -or $ProvisionerJournal -or $Readiness -or $ProfileProposals)) { throw 'NativeRootClaims is a standalone bounded gate' }
 if ($ProvisionerJournal -and ($LifecycleOnly -or $HostOnly -or $LaunchRecovery -or $LaunchNative -or $FilesystemBindings -or $RepositoryBindingOnly -or $FilesystemNative -or $FilesystemLeases -or $FilesystemLeaseNative -or $FilesystemLeaseChannelNative -or $WorktreeReservations -or $MigrationSessions -or $CounterpartStatus -or $ProvisionerPlans -or $Readiness -or $ProfileProposals)) { throw 'ProvisionerJournal is a standalone bounded gate' }
 if ($RepositoryBindingOnly -and ($LifecycleOnly -or $HostOnly -or $LaunchRecovery -or $LaunchNative -or $FilesystemBindings -or $FilesystemNative -or $FilesystemLeases -or $FilesystemLeaseNative -or $FilesystemLeaseChannelNative -or $WorktreeReservations -or $MigrationSessions -or $CounterpartStatus -or $ProvisionerPlans -or $Readiness -or $ProfileProposals)) { throw 'RepositoryBindingOnly is a standalone bounded gate' }
@@ -131,6 +134,7 @@ if (-not $Internal) {
   if ($CounterpartStatus) { $commandLine += ' -CounterpartStatus ' + $CounterpartStatus }
   if ($ProvisionerPlans) { $commandLine += ' -ProvisionerPlans ' + $ProvisionerPlans }
   if ($ProvisionerJournal) { $commandLine += ' -ProvisionerJournal ' + $ProvisionerJournal }
+  if ($ProvisionerAdmissions) { $commandLine += ' -ProvisionerAdmissions ' + $ProvisionerAdmissions }
   if ($NativeRootClaims) { $commandLine += ' -NativeRootClaims ' + $NativeRootClaims }
   if ($Readiness) { $commandLine += ' -Readiness ' + $Readiness }
   if ($ProfileProposals) { $commandLine += ' -ProfileProposals ' + $ProfileProposals }
@@ -372,7 +376,7 @@ try {
     Write-Host 'Migration session integration passed; removing only the owned disposable database container.'
     return
   }
-  if ($RepositoryBindingOnly -or $FilesystemLeaseChannelNative -or $WorktreeReservations -or $CounterpartStatus -or $ProvisionerPlans -or $ProvisionerJournal -or $NativeRootClaims -or $Readiness -or $ProfileProposals) {
+  if ($RepositoryBindingOnly -or $FilesystemLeaseChannelNative -or $WorktreeReservations -or $CounterpartStatus -or $ProvisionerPlans -or $ProvisionerJournal -or $ProvisionerAdmissions -or $NativeRootClaims -or $Readiness -or $ProfileProposals) {
     # Focused real database/native phases apply the same seeded schema directly.
     # Unrelated predecessor suites cannot consume their bounded child's budget.
     $focusedMigrations = @('0006_host_dispatch.sql', '0007_supervised_workers.sql', '0008_worker_recovery.sql',
@@ -390,6 +394,20 @@ try {
       Invoke-AcpSqlFile 'packages/storage/migrations/0013_filesystem_bindings.sql' '0013 empty registry re-upgrade'
       Invoke-AcpNodeCheck 'packages/storage/test/integration/filesystem-bindings.ts' 'Isolated repository registry integration' -TimeoutSeconds 30
       Write-Host 'Focused repository registry phase passed; no native observation, writer lease or Git mutation enabled.'
+      return
+    }
+    if ($ProvisionerAdmissions) {
+      foreach ($migration in @('0015_worktree_target_holds.sql','0016_worktree_provisioner_attempts.sql','0017_capability_readiness.sql','0018_project_profile_proposals.sql','0019_provisioner_process_journal.sql','0020_windows_native_root_claims.sql')) {
+        Invoke-AcpSqlFile ('packages/storage/migrations/' + $migration) ('Provisioner admission prerequisite: ' + $migration)
+      }
+      if ($ProvisionerAdmissions -ne 'upgrade') { Invoke-AcpSqlFile 'packages/storage/migrations/0021_provisioner_admissions.sql' '0021 fresh-only provisioner admissions' }
+      if ($ProvisionerAdmissions -eq 'regression') {
+        Invoke-AcpNodeCheck 'packages/storage/test/integration/provisioner-journal.ts' 'Provisioner journal regression under0021' 'core' -TimeoutSeconds 30
+        Invoke-AcpNodeCheck 'packages/storage/test/integration/native-root-claims.ts' 'Shared native root claims regression under0021' 'core' -TimeoutSeconds 30
+      } else {
+        Invoke-AcpNodeCheck 'packages/storage/test/integration/provisioner-admission.ts' 'Fresh-only provisioner admission integration' $ProvisionerAdmissions -TimeoutSeconds 30
+      }
+      Write-Host 'Focused provisioner admission passed; native GO, Git mutation, success and hold release remain disabled.'
       return
     }
     if ($NativeRootClaims) {
