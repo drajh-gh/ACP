@@ -19,7 +19,7 @@ param(
   [string]$CounterpartSessions,
   [ValidateSet('core', 'races', 'references', 'snapshot', 'upgrade', 'http', 'source-core', 'source-races', 'source-upgrade')]
   [string]$AttentionQueue,
-  [ValidateSet('core', 'races', 'upgrade')]
+  [ValidateSet('core', 'races', 'upgrade', 'history')]
   [string]$RequestIdentity,
   [ValidateSet('core', 'races', 'expiry', 'upgrade', 'regression')]
   [string]$ProvisionerPlans,

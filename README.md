@@ -23,6 +23,9 @@ and cannot authorize or execute work. See the [review guide](prototypes/operatio
   constructor-owned recording provenance, exact replay and server-owned time;
   this [policy-neutral foundation](docs/architecture/0039-request-identity.md)
   does not start work, approve scope, decide closure or connect the prototype
+- a private one-snapshot recorded request-history read, with exact project/request
+  identity, complete bounded associations and explicit non-authority; no public
+  endpoint, producer metadata, current lifecycle inference or partial-history success
 - orthogonal mission, candidate, deployment, acceptance, tracker, effect, and
   business-completion state
 - completion-contract evaluation that cannot imply sibling lifecycle state

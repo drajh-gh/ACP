@@ -1,6 +1,6 @@
 # 0039 — Original request identity and mission associations
 
-Status: Private storage foundation implemented; operator and board integration absent.
+Status: Private storage and recorded-history projection implemented; operator and board integration absent.
 
 The product contract requires one original request to survive work across multiple
 missions. A mission rename cannot establish that identity. The independent P2a
@@ -54,6 +54,30 @@ a populated downgrade refuses to erase either history. Existing intake and missi
 records are not backfilled into invented requests. This private schema is not a
 security boundary against a database owner who can alter or disable its guards.
 
+## Read-only recorded history
+
+`getRequestHistory` takes only an exact project/request pair and reads the original
+statement plus its recorded mission associations in one PostgreSQL statement.
+Missing or foreign scope returns no record. A genuinely unlinked request returns
+an empty association list, not a claim that nothing remains to do. The response
+marks coverage as `recorded_associations_only`, freshness as `not_assessed` and
+authority as `not_granted`. It exposes no producer/runtime provenance, source
+envelope, mission lifecycle state, approval or readiness conclusion.
+
+The fixed bounds are 100 associations and 65,536 serialized bytes. SQL retrieves
+one extra association to detect overflow, then denies an overfull or oversized
+history without returning a prefix, invented cursor or smaller replacement. The
+domain boundary validates the entire immutable result, exact identity, canonical
+mission-ID order, unique associations and microsecond chronology. SQL uses one
+MVCC snapshot, so a concurrent association is seen either in that statement or a
+subsequent read, never mixed across multiple queries. No locks or writer procedures
+run in the production read. The caller owns bounded connection and SQL settings.
+
+This is historical reporting: retirement of a recording producer neither hides
+the original history nor refreshes its timestamps or grants authority. The read
+works with SELECT on only the two request tables and no access to runtime
+provenance. It remains a private persistence function, not an authenticated API.
+
 ## Qualification and remaining boundary
 
 Eight domain tests and eight storage unit tests cover immutable terms, identity
@@ -70,7 +94,19 @@ Independent read-only source assurance passes. Its initial non-blocking coverage
 observation prompted the explicit retirement regression and was closed on delta review.
 The original domain and store seams were exercised RED before their implementation.
 
-No read projection, authenticated request writer, browser binding, live intake,
+The subsequent private history projection adds seven domain and five storage unit
+cases, with four failing RED cases at each new seam before implementation. Six
+actual PostgreSQL groups in `-RequestIdentity history` prove exact/missing/foreign
+scope, SELECT-only least-privilege access, concurrent MVCC history, both whole-result
+overflow guards, retained historical reads after producer retirement and unchanged
+execution/control records. The test-only advisory lock used to expose MVCC timing
+does not exist in the production query.
+This history candidate passes independent read-only source assurance, strict
+TypeScript, all 814 local tests, secret scanning and whitespace checks. No
+additional browser behavior changed; the prior 15-group prototype check remains
+applicable to its unchanged source hashes.
+
+No authenticated request endpoint, browser binding, live intake,
 proposal decision, obligation, communication plan or closure evaluator is part of
 this checkpoint. The synthetic Operations prototype remains in-memory and cannot
 persist these records. Further selected work must preserve both that distinction

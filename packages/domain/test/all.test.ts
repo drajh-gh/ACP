@@ -1,5 +1,6 @@
 import "./ids.test.ts";
 import "./requests.test.ts";
+import "./request-history.test.ts";
 import "./attention.test.ts";
 import "./json-snapshot.test.ts";
 import "./exact-time.test.ts";

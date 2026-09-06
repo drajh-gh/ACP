@@ -1,6 +1,6 @@
 # ACP — Product-led delivery slice
 
-Status: Isolated Operations prototype built for review; independent request-identity foundation implemented locally.
+Status: Isolated Operations prototype built for review; independent request identity and private recorded-history foundation implemented.
 Baseline: `85a137818e964065a1783fc825053cecfaadb10f` (published to GitHub `main`).
 Decision: David approved bringing the product/UI specifications into the next
 delivery phase and selected ACP as the current name on 2026-09-06.
@@ -26,7 +26,7 @@ renaming a mission to a passenger would not implement that requirement.
 
 | User capability | Existing foundation | Product work still required |
 |---|---|---|
-| Find the request needing a decision | Recorded mission, attention and readiness MCP reads; private immutable request and mission-association storage | Contextual request projection and authenticated board integration |
+| Find the request needing a decision | Recorded mission, attention and readiness MCP reads; private immutable request history and mission associations | Cross-request board projection and authenticated board integration |
 | Approve an intended outcome and scope | Exact effect approvals, drift and precondition guards | Versioned destination/scope proposals and separately recorded operator decisions |
 | Understand a journey | Orthogonal lifecycle states and retained evidence | Checkpoint/obligation projection across missions; no inferred passed checks |
 | Edit or reject a proposal | Immutable backend history patterns | New proposal revisions, stale-review rejection, preserved underlying problem |
@@ -81,6 +81,8 @@ recurrence policy. It can proceed before P1 usability acceptance. Migration 0024
 and the private `PostgresRequestStore` implement this boundary; see
 [request identity](../architecture/0039-request-identity.md). One intake may seed
 multiple explicitly distinct requests, and a request may link multiple missions.
+The private exact-request history read returns one bounded recorded snapshot; it
+does not assess current mission state or derive a board's action priority.
 No operator writer, browser binding, source assignment or execution is enabled.
 
 After the policy decisions below, implement versioned destination/scope proposals,

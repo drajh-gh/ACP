@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { Pool, type QueryResult, type QueryResultRow } from "pg";
-import { createStableId, parseRequestRegistration, type RequestRegistration, type StableId } from "@acp/domain";
+import { createStableId, parseRequestRegistration, requestHistoryMaximumAssociations, requestHistoryMaximumBytes, type RequestRegistration, type StableId } from "@acp/domain";
 import { PostgresRequestStore } from "../../src/request-store.ts";
+import { getRequestHistory, requestHistorySql } from "../../src/request-history.ts";
+import type { QueryExecutor } from "../../src/database.ts";
 
 const port = Number(process.argv[2]), phase = process.argv[3];
-assert.ok(Number.isInteger(port) && port > 1023 && port < 65536 && ["core", "races", "upgrade"].includes(phase ?? ""));
+assert.ok(Number.isInteger(port) && port > 1023 && port < 65536 && ["core", "races", "upgrade", "history"].includes(phase ?? ""));
 const configuration = { connectionString: `postgresql://postgres:acp_test_password@127.0.0.1:${port}/acp_test`, max: 4,
   connectionTimeoutMillis: 3000, statement_timeout: 5000, lock_timeout: 2000 };
 const pool = new Pool(configuration), legacy = (prefix: string, suffix = "001") => `${prefix}_00000000-0000-4000-8000-000000000${suffix}`;
@@ -39,6 +41,11 @@ async function migration(direction: "up" | "down") {
   try { await client.query("BEGIN"); await client.query(sql); await client.query("COMMIT"); }
   catch (error) { try { await client.query("ROLLBACK"); } catch {} throw error; }
   finally { client.release(true); }
+}
+async function until(condition: () => Promise<boolean>) {
+  const deadline = Date.now() + 2000;
+  while (Date.now() < deadline) { if (await condition()) return; await new Promise(done => setTimeout(done, 10)); }
+  assert.fail("bounded request fixture condition did not become observable");
 }
 try {
   const baseline = await counts();
@@ -129,6 +136,82 @@ try {
       assert.ok(ended); await ended; assert.equal(connects, 1); assert.equal(reads, 0); assert.deepEqual(discarded, [true]);
       const before = await counts(), recovered = await store.recordRequest(input); assert.equal(recovered.replayed, true);
       assert.deepEqual(recovered.record, input); assert.deepEqual(await counts(), before);
+    });
+  } else if (phase === "history") {
+    await check("exact recorded history distinguishes absent scope, empty links and authored meaning", async () => {
+      const input = await request(), q = { projectId, requestId: input.requestId };
+      assert.equal(await getRequestHistory(pool, q), undefined);
+      const receipt = await store.recordRequest(input), empty = await getRequestHistory(pool, q); assert.ok(empty);
+      assert.deepEqual(empty.request, input); assert.equal(empty.recordedAt, receipt.recordedAt); assert.deepEqual(empty.missionAssociations, []);
+      assert.equal(empty.coverage, "recorded_associations_only"); assert.equal(empty.freshness, "not_assessed"); assert.equal(empty.authority, "not_granted");
+      const association = await store.associateMission(link(input)), result = await getRequestHistory(pool, q); assert.ok(result);
+      assert.deepEqual(result.missionAssociations, [{ missionId, reason: association.record.reason, recordedAt: association.recordedAt }]);
+      assert.equal(JSON.stringify(result).includes(provenanceId), false);
+      assert.equal(await getRequestHistory(pool, { ...q, projectId: legacy("prj", "900") }), undefined);
+      assert.equal(await getRequestHistory(pool, { ...q, projectId: createStableId("project") }), undefined);
+    });
+    await check("SELECT-only request reader works without write privileges or runtime provenance access", async () => {
+      const input = await request(); await store.recordRequest(input); await store.associateMission(link(input));
+      await pool.query("CREATE ROLE request_history_reader LOGIN PASSWORD 'synthetic_request_history_password'");
+      await pool.query("GRANT USAGE ON SCHEMA acp TO request_history_reader");
+      await pool.query("GRANT SELECT ON acp.request_records,acp.request_mission_associations TO request_history_reader");
+      const reader = new Pool({ ...configuration, connectionString: `postgresql://request_history_reader:synthetic_request_history_password@127.0.0.1:${port}/acp_test`, options: "-c default_transaction_read_only=on" });
+      try {
+        const before = await counts(); assert.equal((await getRequestHistory(reader, { projectId, requestId: input.requestId }))?.missionAssociations.length, 1);
+        await assert.rejects(reader.query("SELECT * FROM acp.runtime_provenance"));
+        await assert.rejects(new PostgresRequestStore(reader, { provenanceId }).recordRequest({ ...input, requestId: createStableId("request") }));
+        assert.deepEqual(await counts(), before);
+      } finally { await reader.end(); }
+    });
+    await check("one history statement retains its MVCC snapshot during a concurrent mission association", async () => {
+      const input = await request(); await store.recordRequest(input); const q = { projectId, requestId: input.requestId };
+      const lock = await pool.connect(), reader = await pool.connect(), key = `acp-request-history-${input.requestId}`;
+      let result: ReturnType<typeof getRequestHistory> | undefined;
+      try {
+        await lock.query("SELECT pg_advisory_lock(hashtextextended($1,0))", [key]); const pid = (await reader.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
+        // Test-only lock delays execution after this statement's snapshot is fixed.
+        const executor = { query(sql: string, args: unknown[]) {
+          return reader.query(sql.replace("WITH\nscope", "WITH held AS MATERIALIZED (SELECT pg_advisory_xact_lock(hashtextextended($5::text,0))),\nscope")
+            .replace("FROM payload", "FROM payload CROSS JOIN held"), [...args, key]);
+        } } as QueryExecutor;
+        result = tracked(getRequestHistory(executor, q));
+        await until(async () => (await pool.query("SELECT wait_event FROM pg_stat_activity WHERE pid=$1", [pid])).rows[0]?.wait_event === "advisory");
+        await store.associateMission(link(input));
+        await lock.query("SELECT pg_advisory_unlock(hashtextextended($1,0))", [key]);
+        assert.deepEqual((await result)?.missionAssociations, []);
+        assert.equal((await getRequestHistory(pool, q))?.missionAssociations.length, 1);
+      } finally {
+        try { await lock.query("SELECT pg_advisory_unlock_all()"); } finally { lock.release(true); }
+        if (result) await Promise.allSettled([result]); reader.release(true);
+      }
+    });
+    await check("100 short associations are complete; the 101st and oversized bodies deny whole histories", async () => {
+      const missionIds = Array.from({ length: requestHistoryMaximumAssociations + 1 }, () => createStableId("mission")).sort();
+      await pool.query(`INSERT INTO acp.missions SELECT (jsonb_populate_record(NULL::acp.missions,to_jsonb(source)||
+        jsonb_build_object('mission_id',id,'state','ready','completed_by_evaluation_id',NULL))).*
+        FROM acp.missions source CROSS JOIN unnest($1::text[]) id WHERE source.mission_id=$2`, [missionIds, missionId]);
+      baseline.missions! += missionIds.length;
+      const input = await request(); await store.recordRequest(input); const q = { projectId, requestId: input.requestId };
+      await pool.query("SELECT acp.record_request_mission_link(body,$2::acp.stable_id) FROM jsonb_array_elements($1::jsonb) body",
+        [JSON.stringify(missionIds.slice(0, 100).map(id => link(input, id))), provenanceId]);
+      assert.deepEqual((await getRequestHistory(pool, q))?.missionAssociations.map(row => row.missionId), missionIds.slice(0, 100));
+      await store.associateMission(link(input, missionIds[100]!));
+      const overflow = await pool.query(requestHistorySql, [projectId, input.requestId, requestHistoryMaximumAssociations, requestHistoryMaximumBytes]);
+      assert.equal(overflow.rows[0].request_error, "too_many"); assert.equal(overflow.rows[0].snapshot, null);
+      await denied(() => getRequestHistory(pool, q));
+      const large = await request(); await store.recordRequest(large);
+      await pool.query("SELECT acp.record_request_mission_link(body,$2::acp.stable_id) FROM jsonb_array_elements($1::jsonb) body",
+        [JSON.stringify(missionIds.slice(0, 70).map(id => ({ ...link(large, id), reason: "x".repeat(1000) }))), provenanceId]);
+      const bytes = await pool.query(requestHistorySql, [projectId, large.requestId, requestHistoryMaximumAssociations, requestHistoryMaximumBytes]);
+      assert.equal(bytes.rows[0].request_error, "too_large"); assert.equal(bytes.rows[0].snapshot, null);
+      await denied(() => getRequestHistory(pool, { projectId, requestId: large.requestId }));
+    });
+    await check("retired recording authority does not hide or refresh original request history", async () => {
+      const input = await request(); await store.recordRequest(input); await store.associateMission(link(input));
+      const q = { projectId, requestId: input.requestId }, before = await getRequestHistory(pool, q); assert.ok(before);
+      await pool.query("UPDATE acp.project_workflow_bindings SET retired_at=clock_timestamp() WHERE binding_id=$1", [legacy("wfb")]);
+      const after = await getRequestHistory(pool, q); assert.ok(after);
+      assert.deepEqual({ ...after, asOf: before.asOf }, before); assert.equal(after.authority, "not_granted");
     });
   } else {
     await check("empty downgrade and re-upgrade preserve existing intake and mission history", async () => {
