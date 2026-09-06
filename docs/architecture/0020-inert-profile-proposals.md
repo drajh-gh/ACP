@@ -1,7 +1,7 @@
 # 0020 — Inert whole-profile proposals and exact review requests
 
 Status: Accepted M3 domain foundation. [ADR0021](0021-retained-profile-proposals.md)
-adds a private proposal ledger and current read snapshots. Discovery I/O,
+adds a private proposal ledger and current read snapshots. Filesystem/provider acquisition,
 operator confirmation receipts, publication and activation remain unimplemented.
 
 ## Separate proposal and runtime boundaries
@@ -79,7 +79,12 @@ explicit acquisition and evidence registration demonstrate correct composition,
 not independent production source identity or a race-free acquisition protocol.
 The generic writer still trusts source attribution and does not compare the
 adapter's top-level content hash; current database evidence fingerprints and
-disclosure checks remain separate. Secure acquisition/binding is future work.
+disclosure checks remain separate. The optional
+[database-bound coordinator](../../apps/worker/README.md#database-bound-supplied-manifest-discovery)
+now reads the current SHA-256 and fingerprint together and connects matching
+supplied bytes to the locked private pin precondition. This establishes that
+invocation's byte/database relationship, not filesystem/provider acquisition or
+a durable independently replayable cleartext content-hash transcript.
 
 ### Field states
 

@@ -45,6 +45,27 @@ it("pinned discovery rejects invalid expectations before opening a database sess
   await assert.rejects(store.recordPinnedDiscovery({ ...identity, observations: [], expectedEvidencePins: [], authority: "injected" } as never));
   assert.equal(calls, 0);
 });
+it("current discovery evidence is one bounded private snapshot with exact scope and no raw source metadata", async () => {
+  const evidenceId = createStableId("evidence"), expectedPin = { evidenceId, projectId: identity.projectId, identityDigest: canonicalJsonDigest({ source: true }) };
+  const contentHash = canonicalJsonDigest({ bytes: true }), seen: string[] = [];
+  const pool = { options, async query(sql: string, values: unknown[]) { seen.push(sql); assert.deepEqual(values, [identity.projectId, evidenceId]);
+    return { rows: [{ source: { evidenceId, projectId: identity.projectId, contentHash, expectedPin } }] };
+  } } as unknown as Pool;
+  const result = await new PostgresProfileProposalStore(pool, producer).getCurrentDiscoveryEvidence({ projectId: identity.projectId, evidenceId });
+  assert.deepEqual(result, { evidenceId, projectId: identity.projectId, contentHash, expectedPin });
+  assert.equal(seen.length, 1); assert.match(seen[0]!, /SELECT/u); assert.doesNotMatch(seen[0]!, /INSERT|UPDATE|DELETE|FOR SHARE/u);
+});
+it("current discovery evidence denies invalid queries before I/O and missing or substituted source responses as a whole", async () => {
+  const evidenceId = createStableId("evidence"), expectedPin = { evidenceId, projectId: identity.projectId, identityDigest: canonicalJsonDigest({ source: true }) };
+  const source = { evidenceId, projectId: identity.projectId, contentHash: canonicalJsonDigest({ bytes: true }), expectedPin };
+  let rows: unknown[] = [], calls = 0;
+  const pool = { options, async query() { calls++; return { rows }; } } as unknown as Pool, store = new PostgresProfileProposalStore(pool, producer);
+  await assert.rejects(store.getCurrentDiscoveryEvidence({ projectId: identity.projectId, evidenceId, latest: true })); assert.equal(calls, 0);
+  for (const bad of [[], [{ source: null }], [{ source: { ...source, contentHash: "sha256:bad" } }], [{ source: { ...source, projectId: createStableId("project") } }],
+    [{ source: { ...source, expectedPin: { ...expectedPin, evidenceId: createStableId("evidence") } } }], [{ source }, { source }]]) {
+    rows = bad; await assert.rejects(store.getCurrentDiscoveryEvidence({ projectId: identity.projectId, evidenceId }), { message: "Current discovery evidence is unavailable." });
+  }
+});
 it("pinned discovery checks retained pins before historical COMMIT and does not rerun live admission", async () => {
   const evidenceId = createStableId("evidence"), pin = { evidenceId, projectId: identity.projectId, identityDigest: canonicalJsonDigest({ source: "original" }) };
   const observations = [{ fieldId: "context.product", value: "Synthetic", evidenceIds: [evidenceId] }];

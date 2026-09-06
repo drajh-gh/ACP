@@ -5,9 +5,10 @@ import { Pool } from "pg";
 import { canonicalJsonDigest, createStableId, type StableId, type ProfileProposalIdentity } from "@acp/domain";
 import { getProjectProfileProposal, getProfileConfirmationRequest, PostgresProfileProposalStore } from "@acp/storage";
 import { discoverNpmPackageManifest } from "../../src/npm-package-manifest-discovery.ts";
+import { recordNpmManifestDiscovery } from "../../src/npm-manifest-discovery-coordinator.ts";
 
-const port = Number(process.argv[2]);
-if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error("owned PostgreSQL port required");
+const port = Number(process.argv[2]), phase = process.argv[3] ?? "static";
+if (!Number.isInteger(port) || port < 1024 || port > 65535 || !["static", "bound"].includes(phase)) throw new Error("owned PostgreSQL port and exact manifest phase required");
 const pool = new Pool({ connectionString: `postgresql://postgres:acp_test_password@127.0.0.1:${port}/acp_test`, max: 4,
   connectionTimeoutMillis: 3000, statement_timeout: 5000, lock_timeout: 2000 });
 const legacy = (prefix: string) => `${prefix}_00000000-0000-4000-8000-000000000001`;
@@ -93,5 +94,91 @@ try {
     await assert.rejects(getProjectProfileProposal(pool, query(row)), /unavailable/u);
     assert.deepEqual(await writer.recordDiscovery({ ...row, observations: result.observations }), { proposal: saved.proposal, replayed: true });
   });
+  if (phase === "bound") {
+    await check("private coordinator binds supplied bytes to the current database hash and exact retained pin", async () => {
+      const supplied = await evidence(bytes), row = identity(), before = await counts();
+      const saved = await recordNpmManifestDiscovery(writer, { ...row, evidenceId: supplied.evidenceId, bytes });
+      assert.equal(saved.state, "recorded"); if (saved.state !== "recorded") throw new Error("fixture discovery missing");
+      assert.equal(saved.replayed, false); assert.equal(saved.proposal.state, "needs_input");
+      const source = await writer.getCurrentDiscoveryEvidence({ projectId, evidenceId: supplied.evidenceId });
+      assert.deepEqual(saved.proposal.evidencePins, [source.expectedPin]); assert.equal(source.contentHash, hash(bytes));
+      assert.deepEqual(await getProjectProfileProposal(pool, query(row)), saved.proposal);
+      const text = JSON.stringify(saved.proposal); assert.equal(text.includes(sentinel), false); assert.equal(text.includes(hash(bytes)), false);
+      const after = await counts(); assert.equal(after.proposals, before.proposals + 1); assert.equal(after.pins, before.pins + 1);
+      for (const key of ["profiles", "grants", "runs", "effects", "missions"]) assert.equal(after[key], before[key]);
+    });
+    await check("private source descriptor fails whole on absent, wrong-project, unusable or non-SHA256 evidence", async () => {
+      const supplied = await evidence(bytes), selected = { projectId, evidenceId: supplied.evidenceId };
+      const before = await counts(), descriptor = await writer.getCurrentDiscoveryEvidence(selected);
+      assert.deepEqual(Object.keys(descriptor).sort(), ["contentHash", "evidenceId", "expectedPin", "projectId"]);
+      for (const bad of [{ ...selected, evidenceId: createStableId("evidence") }, { ...selected, projectId: createStableId("project") }]) {
+        await assert.rejects(writer.getCurrentDiscoveryEvidence(bad), { message: "Current discovery evidence is unavailable." });
+      }
+      for (const change of ["freshness='stale'", "accessibility='inaccessible'", "sensitivity='restricted'", "content_hash=NULL",
+        "content_hash='sha256:invented'", "retrieved_at='2099-01-01T00:00:00Z'"]) {
+        const item = await evidence(bytes); await pool.query(`UPDATE acp.evidence_records SET ${change} WHERE evidence_id=$1`, [item.evidenceId]);
+        await assert.rejects(writer.getCurrentDiscoveryEvidence({ projectId, evidenceId: item.evidenceId }), { message: "Current discovery evidence is unavailable." });
+      }
+      assert.deepEqual(await counts(), before);
+    });
+    await check("bad hash, ambiguous JSON and no relevant declarations write no parent or pins", async () => {
+      const before = await counts();
+      for (const value of [Buffer.from("wrong hash"), Buffer.from('{"scripts":{"test":"a","test":"b"}}'), Buffer.from('{}'), Buffer.from('{"scripts":{"pretest":"synthetic"}}')]) {
+        const supplied = await evidence(value.toString() === "wrong hash" ? bytes : value), row = identity();
+        const result = await recordNpmManifestDiscovery(writer, { ...row, evidenceId: supplied.evidenceId, bytes: value });
+        assert.equal(result.state, "not_recorded");
+        if (result.state === "not_recorded") assert.equal(result.reason, value.toString().includes("scripts\":{\"test") || value.toString() === "wrong hash" ? "manifest_unconfirmed" : "no_relevant_declarations");
+        assert.equal((await pool.query("SELECT count(*)::integer AS n FROM acp.project_profile_proposals WHERE proposal_id=$1", [row.proposalId])).rows[0].n, 0);
+      }
+      assert.deepEqual(await counts(), before);
+    });
+    await check("post-descriptor identity, freshness, accessibility or disclosure changes cannot slip into a new draft", async () => {
+      for (const change of ["content_hash='sha256:changed'", "source_version='changed'", "freshness='stale'", "accessibility='inaccessible'", "sensitivity='restricted'"]) {
+        const supplied = await evidence(bytes), row = identity(), before = await counts();
+        const intercepted = { async getCurrentDiscoveryEvidence(value: unknown) {
+          const source = await writer.getCurrentDiscoveryEvidence(value);
+          await pool.query(`UPDATE acp.evidence_records SET ${change} WHERE evidence_id=$1`, [supplied.evidenceId]); return source;
+        }, recordPinnedDiscovery: writer.recordPinnedDiscovery.bind(writer) };
+        await assert.rejects(recordNpmManifestDiscovery(intercepted, { ...row, evidenceId: supplied.evidenceId, bytes }), /not confirmed/u);
+        assert.deepEqual(await counts(), before);
+      }
+    });
+    await check("same-current-source replay succeeds but changed source with equivalent declarations cannot alias history", async () => {
+      const supplied = await evidence(bytes), row = identity(), input = { ...row, evidenceId: supplied.evidenceId, bytes };
+      const saved = await recordNpmManifestDiscovery(writer, input); assert.equal(saved.state, "recorded");
+      if (saved.state !== "recorded") throw new Error("fixture discovery missing");
+      assert.deepEqual(await recordNpmManifestDiscovery(writer, input), { ...saved, replayed: true });
+      const changedBytes = Buffer.concat([bytes, Buffer.from(" ")]);
+      await pool.query("UPDATE acp.evidence_records SET content_hash=$2 WHERE evidence_id=$1", [supplied.evidenceId, hash(changedBytes)]);
+      assert.deepEqual(await recordNpmManifestDiscovery(writer, input), { state: "not_recorded", reason: "manifest_unconfirmed" });
+      await assert.rejects(recordNpmManifestDiscovery(writer, { ...input, bytes: changedBytes }), /not confirmed/u);
+      assert.deepEqual(await getProjectProfileProposal(pool, query(row)), saved.proposal);
+    });
+    await check("no-observation result says only this invocation wrote nothing even when the proposal ID has history", async () => {
+      const supplied = await evidence(bytes), row = identity(), saved = await recordNpmManifestDiscovery(writer, { ...row, evidenceId: supplied.evidenceId, bytes });
+      assert.equal(saved.state, "recorded"); if (saved.state !== "recorded") throw new Error("fixture discovery missing");
+      const emptyBytes = Buffer.from('{}'), empty = await evidence(emptyBytes), before = await counts();
+      assert.deepEqual(await recordNpmManifestDiscovery(writer, { ...row, evidenceId: empty.evidenceId, bytes: emptyBytes }), { state: "not_recorded", reason: "no_relevant_declarations" });
+      assert.deepEqual(await counts(), before); assert.deepEqual(await getProjectProfileProposal(pool, query(row)), saved.proposal);
+    });
+    for (const readbackFails of [false, true]) await check(`coordinator ${readbackFails ? "preserves uncertainty after failed readback" : "recovers exact retention"} after a real lost COMMIT`, async () => {
+      const supplied = await evidence(bytes), row = identity(), input = { ...row, evidenceId: supplied.evidenceId, bytes };
+      const intercepted = { options: pool.options, async query(sql: string, values?: unknown[]) {
+        if (readbackFails && sql.startsWith("SELECT CASE WHEN octet_length(body")) throw new Error("synthetic private readback failure");
+        return pool.query(sql, values);
+      }, async connect() { const client = await pool.connect(); return { on: client.on.bind(client), off: client.off.bind(client),
+        async query(sql: string, values?: unknown[]) { const result = await client.query(sql, values); if (sql === "COMMIT") throw new Error("synthetic private lost COMMIT"); return result; },
+        release(discard?: Error | boolean) { assert.equal(discard, true); client.release(discard); } }; } } as unknown as Pool;
+      const producer = { component: "synthetic-bound-manifest", version: "1", artifactDigest: canonicalJsonDigest({ boundFixture: true }) };
+      if (readbackFails) await assert.rejects(recordNpmManifestDiscovery(new PostgresProfileProposalStore(intercepted, producer), input),
+        { message: "Manifest discovery was not confirmed; persistence may require exact retry." });
+      else {
+        const result = await recordNpmManifestDiscovery(new PostgresProfileProposalStore(intercepted, producer), input);
+        assert.equal(result.state, "recorded"); if (result.state === "recorded") assert.equal(result.replayed, true);
+      }
+      const retry = await recordNpmManifestDiscovery(new PostgresProfileProposalStore(pool, producer), input);
+      assert.equal(retry.state, "recorded"); if (retry.state === "recorded") assert.equal(retry.replayed, true);
+    });
+  }
   process.stdout.write(`Static manifest PostgreSQL integration passed: ${checks} checks.\n`);
 } finally { await pool.end(); }

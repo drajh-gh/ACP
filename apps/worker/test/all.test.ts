@@ -15,3 +15,4 @@ import "./filesystem-writer-guard.test.ts";
 import "./native-filesystem-writer-controller.test.ts";
 import "./windows-filesystem-lease-channel.test.ts";
 import "./npm-package-manifest-discovery.test.ts";
+import "./npm-manifest-discovery-coordinator.test.ts";

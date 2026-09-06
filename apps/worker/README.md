@@ -41,6 +41,47 @@ scripts contract](https://docs.npmjs.com/cli/v11/configuring-npm/package-json/#s
 and [script lifecycle](https://docs.npmjs.com/cli/v11/using-npm/scripts/); presence is
 configuration evidence, never successful execution.
 
+## Database-bound supplied manifest discovery
+
+`recordNpmManifestDiscovery` composes supplied bytes with the private proposal
+store. Input contains only exact proposal identity, one evidence ID and a byte
+view; callers cannot choose hashes, pins, observations, producer or authority.
+The coordinator owns a bounded byte copy before asynchronous work. The store's
+`getCurrentDiscoveryEvidence` reads the exact project/evidence pair in one bounded
+snapshot, requiring current, available, disclosable and temporally valid evidence
+with an exact lowercase SHA-256 content hash. Only that hash and its matching
+opaque evidence pin are returned internally, never source references or raw content.
+
+The adapter checks its copied bytes against that database hash. Successful,
+nonempty observations pass only to `recordPinnedDiscovery`, which rechecks current
+usability and the same fingerprint under database locks before retaining server
+pins. Source identity or usability drift between lookup and admission fails closed.
+The coordinator reparses the returned full proposal and checks exact input identity,
+fields and pins before returning `recorded` with the store's replay flag.
+
+An unconfirmed parse/hash returns `not_recorded / manifest_unconfirmed`. A valid
+manifest without relevant declarations returns `not_recorded /
+no_relevant_declarations`. Neither branch invokes the writer. These outcomes mean
+only **this invocation wrote nothing**; they neither query nor establish absence
+of an older proposal under the same ID. Source/persistence errors instead throw
+one constant error. A thrown error may follow an uncertain committed write, so
+it must not be treated as absence or automatically retried with a new ID.
+
+Every coordinator call performs a fresh source lookup. Same-current-source retries
+can recover the retained result; changed or restricted evidence cannot bypass the
+lookup by replaying history. Original-pin recovery after drift remains the separate
+private writer path. A successful invocation binds the parsed byte snapshot to the
+database content hash and retained pin at that invocation, but a historical proposal
+alone does not preserve a cleartext content-hash transcript or prove source bytes.
+Filesystem/path acquisition, provider authenticity, source authority and appropriate
+script-name disclosure remain outside this helper. Nothing is installed, scheduled,
+published, activated or executed.
+
+`pwsh -NoProfile -File scripts/check-postgres.ps1 -ProfileProposals bound-manifest`
+runs the six static fixture checks plus eight coordinator/descriptor checks against
+owned PostgreSQL, including current-source drift, no-write outcomes, historical
+ID reuse and actual lost-COMMIT recovery/uncertainty.
+
 ## Host-aware execution
 
 The optional fourth argument to `launchWorker` is a `HostDispatchRuntime` built

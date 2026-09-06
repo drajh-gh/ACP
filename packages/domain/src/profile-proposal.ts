@@ -90,6 +90,22 @@ export function parseProjectProfileProposalQuery(value: unknown): ProjectProfile
   return { projectId: parseStableId(input.projectId, "project"), proposalId: parseStableId(input.proposalId, "projectProfileProposal") };
 }
 
+export function parseProfileDiscoveryEvidenceQuery(value: unknown) {
+  const input = expectRecord(value, "exact discovery evidence query");
+  expectOnlyKeys(input, ["projectId", "evidenceId"], "exact discovery evidence query");
+  return { projectId: parseStableId(input.projectId, "project"), evidenceId: parseStableId(input.evidenceId, "evidence") };
+}
+
+/** Private descriptor shape/scope only. Currentness and source fingerprint derivation belong to trusted storage. */
+export function parseCurrentProfileDiscoveryEvidence(value: unknown, queryValue: unknown) {
+  const query = parseProfileDiscoveryEvidenceQuery(queryValue), input = expectRecord(value, "current discovery evidence");
+  expectOnlyKeys(input, ["evidenceId", "projectId", "contentHash", "expectedPin"], "current discovery evidence");
+  const expectedPin = parsePin(input.expectedPin, query.projectId);
+  if (input.evidenceId !== query.evidenceId || input.projectId !== query.projectId || expectedPin.evidenceId !== query.evidenceId
+    || typeof input.contentHash !== "string" || !/^sha256:[0-9a-f]{64}$/u.test(input.contentHash)) throw new Error("Invalid current discovery evidence.");
+  return { ...query, contentHash: input.contentHash, expectedPin };
+}
+
 /** Pure assembly from selected, already-redacted discovery results; it performs no discovery I/O or authorization. */
 export function buildProjectProfileProposal(metadataValue: unknown, discoveredFields: unknown, evidencePinsValue: unknown): ProjectProfileProposal {
   try {

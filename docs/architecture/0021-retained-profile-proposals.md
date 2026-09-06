@@ -58,7 +58,13 @@ admission. No public writer, migration, caller migration or automatic coordinato
 is introduced. An opaque fingerprint does not prove source bytes, filesystem path,
 content-hash provenance or authority. In particular, this method does not bind the
 manifest adapter's supplied bytes/hash to a database source; secure acquisition and
-that separate durable binding remain future work.
+that separate durable binding remain future work. The optional
+[supplied-manifest coordinator](../../apps/worker/README.md#database-bound-supplied-manifest-discovery)
+adds an invocation-local byte/database relationship: it obtains a current private
+descriptor, checks supplied bytes against its SHA-256, and uses this exact pin
+precondition. It neither changes the historical ledger nor establishes acquisition
+provenance. Its private descriptor read is not added to the public persistence or
+MCP interface.
 
 ## Immutable chains and evidence
 
