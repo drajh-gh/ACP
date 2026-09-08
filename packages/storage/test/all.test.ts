@@ -2,6 +2,7 @@ import "./migration.test.ts";
 import "./attention-store.test.ts";
 import "./request-store.test.ts";
 import "./request-history.test.ts";
+import "./request-brief-reader.test.ts";
 import "./unknown-outcome-attention.test.ts";
 import "./migration-session.test.ts";
 import "./stores.test.ts";
