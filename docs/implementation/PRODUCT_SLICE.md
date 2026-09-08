@@ -139,7 +139,9 @@ the retained history, mission-status and attention readers, and derives semantic
 that ignore observation-time-only changes. It retains optional missing observations,
 fails closed on invalid or failed sources, preserves attention pagination, and makes
 no cross-reader atomicity or current-freshness claim. Fresh-reader recovery measurement
-and any authenticated/public binding remain later increments.
+and any authenticated/public binding remain later increments. The seam bounds call
+count and awaits every call, but its injected readers must supply their own timeout
+and cancellation behavior; no production binding or end-to-end deadline is proven.
 The separate [BB trial assessment](../research/BB_TRIAL_ASSESSMENT.md) records
 the checked version, local prerequisites, account checks and stop procedure.
 

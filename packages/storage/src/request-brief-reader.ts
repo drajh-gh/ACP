@@ -7,6 +7,7 @@ import {
   parseRequestHistoryQuery,
   requestBriefMissionLimit,
   snapshotJsonData,
+  timestampMicroseconds,
   type AttentionQueue,
   type AttentionQueueQuery,
   type JsonValue,
@@ -27,19 +28,24 @@ export interface RequestBriefReaders {
   getAttentionQueue(query: AttentionQueueQuery): Promise<unknown | undefined>;
 }
 
+export interface RequestBriefClock {
+  now(): string;
+}
+
 /** Acquires independent recorded snapshots sequentially. The result does not
  * claim transaction-wide atomicity or current freshness. Optional absent reads
- * remain unavailable; malformed, substituted, or failed reads fail closed. */
+ * remain unavailable; malformed, substituted, or failed reads fail closed.
+ * Readers own cancellation and timeouts; this seam awaits every bounded call. */
 export async function readRequestBrief(
   readers: RequestBriefReaders,
   queryValue: unknown,
-  assembledAt: string,
+  clock: RequestBriefClock,
 ): Promise<RequestBrief | undefined> {
-  // Validate the complete selector and clock before the first reader call.
+  // Validate the complete selector and an initial clock sample before reader I/O.
   const query = parseRequestHistoryQuery(queryValue);
-  const parsedAssembledAt = parseCanonicalTimestamp(assembledAt);
+  const startedAt = sampleClock(clock);
 
-  const firstHistoryValue = await read(readers.getRequestHistory(query), "history");
+  const firstHistoryValue = await read(() => readers.getRequestHistory(query), "history");
   if (firstHistoryValue === undefined) return undefined;
   const history = parseHistory(query, firstHistoryValue);
   if (history.missionAssociations.length > requestBriefMissionLimit) {
@@ -50,11 +56,11 @@ export async function readRequestBrief(
   const attention = [];
   for (const association of history.missionAssociations) {
     const missionId = association.missionId;
-    const firstStatusValue = await read(readers.getMissionStatus(missionId), "mission status");
+    const firstStatusValue = await read(() => readers.getMissionStatus(missionId), "mission status");
     if (firstStatusValue !== undefined) {
       const firstStatus = parseStatus(firstStatusValue, query, missionId);
       const firstPin = semanticPin(firstStatus, "asOf");
-      const secondStatusValue = await read(readers.getMissionStatus(missionId), "mission status");
+      const secondStatusValue = await read(() => readers.getMissionStatus(missionId), "mission status");
       if (secondStatusValue === undefined) throw unavailable("mission status");
       const secondStatus = parseStatus(secondStatusValue, query, missionId);
       missionObservations.push({
@@ -65,6 +71,7 @@ export async function readRequestBrief(
         freshness: "unknown" as const,
         pinBefore: firstPin,
         pinAfter: semanticPin(secondStatus, "asOf"),
+        secondObservedAt: secondStatus.asOf,
         sourceReference: {
           read: "get_mission_status" as const,
           selectors: { missionId },
@@ -76,34 +83,55 @@ export async function readRequestBrief(
     }
 
     const attentionQuery = { projectId: query.projectId, missionId, limit: requestBriefAttentionPageSize };
-    const firstAttentionValue = await read(readers.getAttentionQueue(attentionQuery), "attention");
+    const firstAttentionValue = await read(() => readers.getAttentionQueue(attentionQuery), "attention");
     if (firstAttentionValue !== undefined) {
       const firstAttention = parseAttention(attentionQuery, firstAttentionValue);
       const firstPin = semanticPin(firstAttention, "asOf");
-      const secondAttentionValue = await read(readers.getAttentionQueue(attentionQuery), "attention");
+      const secondAttentionValue = await read(() => readers.getAttentionQueue(attentionQuery), "attention");
       if (secondAttentionValue === undefined) throw unavailable("attention");
       const secondAttention = parseAttention(attentionQuery, secondAttentionValue);
-      attention.push({ queue: firstAttention, pinBefore: firstPin, pinAfter: semanticPin(secondAttention, "asOf") });
+      attention.push({ queue: firstAttention, pinBefore: firstPin, pinAfter: semanticPin(secondAttention, "asOf"),
+        secondObservedAt: secondAttention.asOf });
     }
   }
 
-  const secondHistoryValue = await read(readers.getRequestHistory(query), "history");
+  const secondHistoryValue = await read(() => readers.getRequestHistory(query), "history");
   if (secondHistoryValue === undefined) throw unavailable("history");
   const secondHistory = parseHistory(query, secondHistoryValue);
+  const assembledAt = sampleClock(clock);
+  if (timestampMicroseconds(assembledAt) < timestampMicroseconds(startedAt)) {
+    throw new Error("Request brief clock moved backwards during acquisition.");
+  }
+  for (const [source, observedAt] of [
+    ["history", history.asOf], ["history", secondHistory.asOf],
+    ...missionObservations.flatMap(item => [["mission status", item.observedAt], ["mission status", item.secondObservedAt]]),
+    ...attention.flatMap(item => [["attention", item.queue.asOf], ["attention", item.secondObservedAt]]),
+  ] as const) assertObservedBy(source, observedAt, assembledAt);
   return assembleRequestBrief({
     query,
-    assembledAt: parsedAssembledAt,
+    assembledAt,
     history,
     historyPinBefore: semanticPin(history, "asOf"),
     historyPinAfter: semanticPin(secondHistory, "asOf"),
-    missionObservations,
-    attention,
+    missionObservations: missionObservations.map(({ secondObservedAt: _second, ...item }) => item),
+    attention: attention.map(({ secondObservedAt: _second, ...item }) => item),
   });
 }
 
-async function read<T>(pending: Promise<T>, source: string): Promise<T> {
-  try { return await pending; }
+async function read<T>(operation: () => Promise<T>, source: string): Promise<T> {
+  try { return await operation(); }
   catch { throw unavailable(source); }
+}
+
+function sampleClock(clock: RequestBriefClock): string {
+  try { return parseCanonicalTimestamp(clock.now()); }
+  catch { throw new Error("Request brief clock is unavailable or invalid."); }
+}
+
+function assertObservedBy(source: string, observedAt: string, assembledAt: string): void {
+  if (timestampMicroseconds(observedAt) > timestampMicroseconds(assembledAt)) {
+    throw new Error(`Request brief ${source} source observation is later than the completion clock.`);
+  }
 }
 
 function unavailable(source: string): Error {
