@@ -130,8 +130,11 @@ runtime-validated domain projection and deterministic assembler over exact reque
 history, selected mission-status observations and recorded attention pages. It is
 not yet stored or exposed through API, MCP or UI. Destination decisions,
 obligations, communications and next-action authority remain explicitly
-unavailable; live source acquisition and the acceptance measurement remain later
-increments.
+unavailable. The projection distinguishes unavailable attention from an observed
+empty or paginated page, retains executable scoped read selectors and source-change
+pins, reports missing and stale issues independently, and refuses association or
+byte overflow as a whole result. Live source acquisition and the acceptance
+measurement remain later increments.
 The separate [BB trial assessment](../research/BB_TRIAL_ASSESSMENT.md) records
 the checked version, local prerequisites, account checks and stop procedure.
 
