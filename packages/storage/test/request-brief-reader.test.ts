@@ -91,6 +91,22 @@ it("returns unavailable for absent history without mission fanout", async () => 
   assert.deepEqual(f.calls, ["history:missing"]);
 });
 
+it("distinguishes first-read absence from repeat history and attention disappearance", async () => {
+  let historyReads = 0;
+  const repeatedHistory = fixture({ async getRequestHistory() {
+    repeatedHistory.calls.push("history:repeat"); return ++historyReads === 1 ? history() : undefined;
+  } });
+  await assert.rejects(readRequestBrief(repeatedHistory.readers, { projectId, requestId }, normalClock()), /history source is unavailable/u);
+  assert.equal(historyReads, 2);
+
+  let attentionReads = 0;
+  const repeatedAttention = fixture({ async getAttentionQueue() {
+    repeatedAttention.calls.push("attention:repeat"); return ++attentionReads === 1 ? queue() : undefined;
+  } });
+  await assert.rejects(readRequestBrief(repeatedAttention.readers, { projectId, requestId }, normalClock()), /attention source is unavailable/u);
+  assert.equal(attentionReads, 2);
+});
+
 it("refuses more than fifty associated missions before fanout", async () => {
   const associations = Array.from({ length: 51 }, (_, index) => ({
     missionId: `mis_00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}` as StableId<"mission">,
@@ -221,6 +237,24 @@ it("samples completion time after advancing live-reader observations and validat
   } });
   await assert.rejects(readRequestBrief(future.readers, { projectId, requestId },
     clock("2026-09-08T11:59:59.000001Z", "2026-09-08T12:00:30.000001Z")), /later than the completion clock/u);
+});
+
+it("rejects future timestamps independently on first and repeat private reads", async () => {
+  const completion = "2026-09-08T12:00:30.000001Z";
+  for (const futureRead of [1, 2]) {
+    let historyReads = 0;
+    const historyFuture = fixture({ async getRequestHistory() {
+      return history({ asOf: ++historyReads === futureRead ? "2026-09-08T12:00:31.000001Z" : at });
+    } });
+    await assert.rejects(readRequestBrief(historyFuture.readers, { projectId, requestId }, clock(at, completion)),
+      /history source observation is later/u);
+    let attentionReads = 0;
+    const attentionFuture = fixture({ async getAttentionQueue() {
+      return queue({ asOf: ++attentionReads === futureRead ? "2026-09-08T12:00:31.000001Z" : at });
+    } });
+    await assert.rejects(readRequestBrief(attentionFuture.readers, { projectId, requestId }, clock(at, completion)),
+      /attention source observation is later/u);
+  }
 });
 
 it("fails safely when the injected clock throws, is invalid, or moves backwards", async () => {
