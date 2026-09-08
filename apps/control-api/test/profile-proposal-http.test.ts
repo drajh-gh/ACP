@@ -64,13 +64,13 @@ describe("inert profile review MCP",()=>{
       assert.equal(data.reads(),2); assert.equal(data.mutations(),0);
     },version);
   });
-  it("preserves explicit version admission and aligns the source package with eight tools",async()=>{
+  it("preserves explicit version admission and aligns the source package with nine tools",async()=>{
     await assert.rejects(withClient(async()=>assert.fail("unexpected dispatch"),"0.3.0",["0.2.0"]),error=>error instanceof Error&&"code" in error&&error.code===426);
     await assert.rejects(withClient(async()=>assert.fail("unexpected dispatch"),"0.2.0",["0.3.0"]),error=>error instanceof Error&&"code" in error&&error.code===426);
     const manifest=JSON.parse(await readFile(new URL("../../../plugins/codex-counterpart/.codex-plugin/plugin.json",import.meta.url),"utf8"));
     const mcp=JSON.parse(await readFile(new URL("../../../plugins/codex-counterpart/.mcp.json",import.meta.url),"utf8"));
     assert.equal(manifest.version,"0.5.0"); assert.equal(mcp.mcpServers["acp-control"].http_headers["X-ACP-Plugin-Version"],manifest.version);
-    assert.deepEqual(mcp.mcpServers["acp-control"].enabled_tools.slice().sort(),["create_mission","get_mission_attention","get_mission_status","get_profile_confirmation_request","get_project_profile_proposal","get_project_readiness","get_request_history","list_active_missions"]);
+    assert.deepEqual(mcp.mcpServers["acp-control"].enabled_tools.slice().sort(),["create_mission","get_mission_attention","get_mission_status","get_profile_confirmation_request","get_project_profile_proposal","get_project_readiness","get_request_brief","get_request_history","list_active_missions"]);
   });
   it("rejects invented selectors and action fields before either persistence call",async()=>{
     await withClient(async(client,data)=>{

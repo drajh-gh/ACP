@@ -39,6 +39,7 @@ export interface CounterpartMissionPersistence extends ProjectReadinessPersisten
     missionId: StableId<"mission">,
   ): Promise<CounterpartMissionProjection | undefined>;
   getMissionStatus(missionId:StableId<"mission">):Promise<CounterpartMissionStatus|undefined>;
+  getRequestBriefCompletionTimestamp():Promise<string>;
   listActiveMissions(
     projectId?: StableId<"project">,
     limit?: number,
@@ -323,6 +324,14 @@ export class PostgresCounterpartMissionStore
 
   async getRequestHistory(query: RequestHistoryQuery) {
     return readRequestHistory(this.pool, query);
+  }
+  async getRequestBriefCompletionTimestamp(): Promise<string> {
+    const row = (await this.pool.query<{ completed_at: string }>(
+      `SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC',
+        'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS completed_at`,
+    )).rows[0];
+    if (row === undefined) throw new Error("database completion clock unavailable");
+    return row.completed_at;
   }
   async getProjectProfileProposal(query: ProjectProfileProposalQuery) {
     return readProjectProfileProposal(this.pool, query);

@@ -30,6 +30,7 @@ function fixture() {
   let reads = 0, mutations = 0;
   const persistence: CounterpartMissionPersistence = {
     async getRequestHistory() { throw new Error("unexpected request history read"); },
+    async getRequestBriefCompletionTimestamp() { throw new Error("unexpected completion clock read"); },
     async getAttentionQueue() { throw new Error("unexpected attention read"); },
     async getProjectProfileProposal() { throw new Error("unexpected profile proposal read"); },
     async getProfileConfirmationRequest() { throw new Error("unexpected profile request read"); },
@@ -85,13 +86,13 @@ describe("recorded readiness MCP", () => {
       error instanceof Error && "code" in error && error.code === 426);
   });
 
-  it("keeps the source plugin feature version, header and eight-tool allowlist aligned", async () => {
+  it("keeps the source plugin feature version, header and nine-tool allowlist aligned", async () => {
     const manifest = JSON.parse(await readFile(new URL("../../../plugins/codex-counterpart/.codex-plugin/plugin.json", import.meta.url), "utf8"));
     const mcp = JSON.parse(await readFile(new URL("../../../plugins/codex-counterpart/.mcp.json", import.meta.url), "utf8"));
     assert.equal(manifest.version, "0.5.0");
     assert.equal(mcp.mcpServers["acp-control"].http_headers["X-ACP-Plugin-Version"], manifest.version);
     assert.deepEqual(mcp.mcpServers["acp-control"].enabled_tools.slice().sort(), [
-      "create_mission", "get_mission_attention", "get_mission_status", "get_profile_confirmation_request", "get_project_profile_proposal", "get_project_readiness", "get_request_history", "list_active_missions",
+      "create_mission", "get_mission_attention", "get_mission_status", "get_profile_confirmation_request", "get_project_profile_proposal", "get_project_readiness", "get_request_brief", "get_request_history", "list_active_missions",
     ]);
   });
 

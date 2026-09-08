@@ -55,5 +55,6 @@ export function recoveryReaders(): RequestBriefReaders {
     if (id === secondMissionId) return undefined;
     statusReads += 1; return status(statusReads === 1 ? "executing" : "verifying",
       statusReads === 1 ? observedAt : "2026-09-08T11:00:30.000001Z");
-  }, async getAttentionQueue(query) { return query.missionId === firstMissionId ? attention() : undefined; } };
+  }, async getAttentionQueue(query) { return query.missionId === firstMissionId ? attention() : undefined; },
+  async getRequestBriefCompletionTimestamp() { return "2026-09-08T12:00:00.000001Z"; } };
 }

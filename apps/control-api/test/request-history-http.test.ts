@@ -90,14 +90,14 @@ it("request history includes the public envelope in its whole 64 KiB cap", async
     data.output = parseRequestHistory(data.query, value); denied(await client.callTool({ name: toolName, arguments: data.query })); assert.equal(data.reads.length, 1);
   });
 });
-it("request history preserves explicit version restrictions and aligns the source plugin's eight tools", async () => {
+it("request history preserves explicit version restrictions and aligns the source plugin's nine tools", async () => {
   for (const [version, allowed] of [["0.5.0", ["0.4.0"]], ["0.4.0", ["0.5.0"]]] as const)
     await assert.rejects(withClient(async () => assert.fail("unexpected dispatch"), version, allowed), error => error instanceof Error && "code" in error && error.code === 426);
   const manifest = JSON.parse(await readFile(new URL("../../../plugins/codex-counterpart/.codex-plugin/plugin.json", import.meta.url), "utf8"));
   const mcp = JSON.parse(await readFile(new URL("../../../plugins/codex-counterpart/.mcp.json", import.meta.url), "utf8"));
   assert.equal(manifest.version, "0.5.0"); assert.equal(mcp.mcpServers["acp-control"].http_headers["X-ACP-Plugin-Version"], manifest.version);
   assert.deepEqual(mcp.mcpServers["acp-control"].enabled_tools.slice().sort(), ["create_mission", "get_mission_attention", "get_mission_status",
-    "get_profile_confirmation_request", "get_project_profile_proposal", "get_project_readiness", "get_request_history", "list_active_missions"]);
+    "get_profile_confirmation_request", "get_project_profile_proposal", "get_project_readiness", "get_request_brief", "get_request_history", "list_active_missions"]);
 });
 it("request history rejects unauthenticated and untrusted-origin traffic before persistence", async () => {
   await withClient(async (_client, data, url) => {

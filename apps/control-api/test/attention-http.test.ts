@@ -130,7 +130,7 @@ it("attention preserves operator version restrictions and repository plugin feat
   const mcp = JSON.parse(await readFile(new URL("../../../plugins/codex-counterpart/.mcp.json", import.meta.url), "utf8"));
   assert.equal(manifest.version, "0.5.0"); assert.equal(mcp.mcpServers["acp-control"].http_headers["X-ACP-Plugin-Version"], manifest.version);
   assert.deepEqual(mcp.mcpServers["acp-control"].enabled_tools.slice().sort(), ["create_mission", "get_mission_attention", "get_mission_status",
-    "get_profile_confirmation_request", "get_project_profile_proposal", "get_project_readiness", "get_request_history", "list_active_missions"]);
+    "get_profile_confirmation_request", "get_project_profile_proposal", "get_project_readiness", "get_request_brief", "get_request_history", "list_active_missions"]);
 });
 it("attention authentication and origin checks reject calls before any persistence read", async () => {
   await withClient(async (_client, data, url) => {
