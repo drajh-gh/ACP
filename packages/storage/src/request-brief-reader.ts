@@ -19,7 +19,7 @@ import {
 import { parseCounterpartMissionStatus, type CounterpartMissionStatus } from "./counterpart-status.ts";
 
 export const requestBriefAttentionPageSize = 20;
-export const requestBriefMaximumReaderCalls = 2 + (requestBriefMissionLimit * 4);
+export const requestBriefMaximumReaderCalls = 3 + (requestBriefMissionLimit * 4);
 /** Stops this sequential assembler from starting additional pool acquisitions.
  * An already-started reader is still awaited and retains its own database limits. */
 export const requestBriefAcquisitionBudgetMilliseconds = 4_000;
@@ -29,26 +29,27 @@ export interface RequestBriefReaders {
   getRequestHistory(query: RequestHistoryQuery): Promise<unknown | undefined>;
   getMissionStatus(missionId: StableId<"mission">): Promise<unknown | undefined>;
   getAttentionQueue(query: AttentionQueueQuery): Promise<unknown | undefined>;
+  /** Same-database clock sampled only after all retained source reads. */
+  getRequestBriefCompletionTimestamp(): Promise<unknown>;
 }
 
 export interface RequestBriefClock {
-  now(): string;
   monotonicMilliseconds(): number;
 }
 
 /** Acquires independent recorded snapshots sequentially. The result does not
  * claim transaction-wide atomicity or current freshness. Optional absent reads
  * remain unavailable; malformed, substituted, or failed reads fail closed.
- * Readers own cancellation and timeouts; this seam awaits every bounded call. */
+ * Readers own in-flight cancellation and timeouts; this seam checks cancellation
+ * between and after calls and awaits every bounded call. */
 export async function readRequestBrief(
   readers: RequestBriefReaders,
   queryValue: unknown,
   clock: RequestBriefClock,
   signal?: AbortSignal,
 ): Promise<RequestBrief | undefined> {
-  // Validate the complete selector and an initial clock sample before reader I/O.
+  // Validate the complete selector and acquisition clock before reader I/O.
   const query = parseRequestHistoryQuery(queryValue);
-  const startedAt = sampleClock(clock);
   const acquisitionStartedAt = sampleMonotonicClock(clock);
   const readWithinBudget = <T>(operation: () => Promise<T>, source: string) => {
     assertCanLaunch(clock, acquisitionStartedAt, signal);
@@ -56,7 +57,10 @@ export async function readRequestBrief(
   };
 
   const firstHistoryValue = await readWithinBudget(() => readers.getRequestHistory(query), "history");
-  if (firstHistoryValue === undefined) return undefined;
+  if (firstHistoryValue === undefined) {
+    assertCanReturn(clock, acquisitionStartedAt, signal);
+    return undefined;
+  }
   const history = parseHistory(query, firstHistoryValue);
   if (history.missionAssociations.length > requestBriefMissionLimit) {
     throw new Error("Request brief history exceeds the bounded mission limit.");
@@ -108,10 +112,10 @@ export async function readRequestBrief(
   const secondHistoryValue = await readWithinBudget(() => readers.getRequestHistory(query), "history");
   if (secondHistoryValue === undefined) throw unavailable("history");
   const secondHistory = parseHistory(query, secondHistoryValue);
-  const assembledAt = sampleClock(clock);
-  if (timestampMicroseconds(assembledAt) < timestampMicroseconds(startedAt)) {
-    throw new Error("Request brief clock moved backwards during acquisition.");
-  }
+  assertCanReturn(clock, acquisitionStartedAt, signal);
+  const completionValue = await readWithinBudget(() => readers.getRequestBriefCompletionTimestamp(), "completion clock");
+  const assembledAt = parseCompletionTimestamp(completionValue);
+  assertCanReturn(clock, acquisitionStartedAt, signal);
   for (const [source, observedAt] of [
     ["history", history.asOf], ["history", secondHistory.asOf],
     ...missionObservations.flatMap(item => [["mission status", item.observedAt], ["mission status", item.secondObservedAt]]),
@@ -133,11 +137,6 @@ async function read<T>(operation: () => Promise<T>, source: string): Promise<T> 
   catch { throw unavailable(source); }
 }
 
-function sampleClock(clock: RequestBriefClock): string {
-  try { return parseCanonicalTimestamp(clock.now()); }
-  catch { throw new Error("Request brief clock is unavailable or invalid."); }
-}
-
 function sampleMonotonicClock(clock: RequestBriefClock): number {
   try {
     const value = clock.monotonicMilliseconds();
@@ -153,6 +152,15 @@ function assertCanLaunch(clock: RequestBriefClock, startedAt: number, signal: Ab
   if (elapsed >= requestBriefAcquisitionBudgetMilliseconds) {
     throw new Error("Request brief acquisition budget expired.");
   }
+}
+
+function assertCanReturn(clock: RequestBriefClock, startedAt: number, signal: AbortSignal | undefined): void {
+  assertCanLaunch(clock, startedAt, signal);
+}
+
+function parseCompletionTimestamp(value: unknown): string {
+  try { return parseCanonicalTimestamp(value); }
+  catch { throw new Error("Request brief completion clock source is invalid."); }
 }
 
 function assertObservedBy(source: string, observedAt: string, assembledAt: string): void {

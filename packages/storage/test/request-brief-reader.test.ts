@@ -21,7 +21,7 @@ const baseStatus = { ...statusFixture(), projectId, missionId, asOf: at };
 
 function clock(...samples: string[]): RequestBriefClock {
   let index = 0;
-  return { now() { return samples[Math.min(index++, samples.length - 1)]!; }, monotonicMilliseconds() { return 0; } };
+  return { monotonicMilliseconds() { index += samples.length; return 0; } };
 }
 
 function normalClock() { return clock("2026-09-08T11:59:00.000001Z", assembledAt); }
@@ -54,16 +54,17 @@ function fixture(change: Partial<RequestBriefReaders> = {}) {
     async getRequestHistory() { calls.push("history"); return history(); },
     async getMissionStatus(id) { calls.push(`status:${id}`); return status(); },
     async getAttentionQueue(query) { calls.push(`attention:${query.limit}`); return queue(); },
+    async getRequestBriefCompletionTimestamp() { calls.push("completion-clock"); return assembledAt; },
     ...change,
   };
   return { readers, calls };
 }
 
-it("validates exact selectors and assembly time before I/O", async () => {
+it("validates exact selectors and acquisition clock before I/O", async () => {
   const f = fixture();
   await assert.rejects(readRequestBrief(f.readers, { projectId }, normalClock()));
   await assert.rejects(readRequestBrief(f.readers, { projectId, requestId, missionId }, normalClock()));
-  await assert.rejects(readRequestBrief(f.readers, { projectId, requestId }, clock("not-a-time")));
+  await assert.rejects(readRequestBrief(f.readers, { projectId, requestId }, { monotonicMilliseconds: () => Number.NaN }));
   assert.deepEqual(f.calls, []);
 });
 
@@ -71,7 +72,7 @@ it("reads only associated missions sequentially within declared bounds", async (
   const f = fixture();
   const brief = await readRequestBrief(f.readers, { projectId, requestId }, normalClock());
   assert.ok(brief);
-  assert.deepEqual(f.calls, ["history", `status:${missionId}`, `status:${missionId}`, "attention:20", "attention:20", "history"]);
+  assert.deepEqual(f.calls, ["history", `status:${missionId}`, `status:${missionId}`, "attention:20", "attention:20", "history", "completion-clock"]);
   assert.ok(f.calls.length <= requestBriefMaximumReaderCalls);
   assert.equal(brief.freshness, "not_assessed");
 });
@@ -90,6 +91,14 @@ it("returns unavailable for absent history without mission fanout", async () => 
   const f = fixture({ async getRequestHistory() { f.calls.push("history:missing"); return undefined; } });
   assert.equal(await readRequestBrief(f.readers, { projectId, requestId }, normalClock()), undefined);
   assert.deepEqual(f.calls, ["history:missing"]);
+});
+
+it("does not return missing when the first owned history read completes cancelled", async () => {
+  const controller = new AbortController(), f = fixture({ async getRequestHistory() {
+    f.calls.push("history:missing-cancelled"); await Promise.resolve(); controller.abort(); return undefined;
+  } });
+  await assert.rejects(readRequestBrief(f.readers, { projectId, requestId }, normalClock(), controller.signal), /was cancelled/u);
+  assert.deepEqual(f.calls, ["history:missing-cancelled"]);
 });
 
 it("distinguishes first-read absence from repeat history and attention disappearance", async () => {
@@ -183,6 +192,7 @@ it("preserves reader method receivers", async () => {
     async getRequestHistory(this: { marker: string }) { assert.equal(this.marker, "expected"); return history(); },
     async getMissionStatus(this: { marker: string }) { assert.equal(this.marker, "expected"); return status(); },
     async getAttentionQueue(this: { marker: string }) { assert.equal(this.marker, "expected"); return queue(); },
+    async getRequestBriefCompletionTimestamp(this: { marker: string }) { assert.equal(this.marker, "expected"); return assembledAt; },
   };
   assert.ok(await readRequestBrief(readers, { projectId, requestId }, normalClock()));
   assert.deepEqual(f.calls, []);
@@ -227,17 +237,15 @@ it("samples completion time after advancing live-reader observations and validat
   let statusReads = 0;
   const f = fixture({ async getMissionStatus() {
     return status({ asOf: ++statusReads === 1 ? "2026-09-08T12:00:10.000001Z" : "2026-09-08T12:00:20.000001Z" });
-  } });
-  const brief = await readRequestBrief(f.readers, { projectId, requestId },
-    clock("2026-09-08T11:59:59.000001Z", "2026-09-08T12:00:30.000001Z"));
+  }, async getRequestBriefCompletionTimestamp() { return "2026-09-08T12:00:30.000001Z"; } });
+  const brief = await readRequestBrief(f.readers, { projectId, requestId }, normalClock());
   assert.equal(brief?.assembledAt, "2026-09-08T12:00:30.000001Z");
 
   statusReads = 0;
   const future = fixture({ async getMissionStatus() {
     return status({ asOf: ++statusReads === 1 ? at : "2026-09-08T12:00:31.000001Z" });
-  } });
-  await assert.rejects(readRequestBrief(future.readers, { projectId, requestId },
-    clock("2026-09-08T11:59:59.000001Z", "2026-09-08T12:00:30.000001Z")), /later than the completion clock/u);
+  }, async getRequestBriefCompletionTimestamp() { return "2026-09-08T12:00:30.000001Z"; } });
+  await assert.rejects(readRequestBrief(future.readers, { projectId, requestId }, normalClock()), /later than the completion clock/u);
 });
 
 it("rejects future timestamps independently on first and repeat private reads", async () => {
@@ -246,24 +254,24 @@ it("rejects future timestamps independently on first and repeat private reads", 
     let historyReads = 0;
     const historyFuture = fixture({ async getRequestHistory() {
       return history({ asOf: ++historyReads === futureRead ? "2026-09-08T12:00:31.000001Z" : at });
-    } });
-    await assert.rejects(readRequestBrief(historyFuture.readers, { projectId, requestId }, clock(at, completion)),
+    }, async getRequestBriefCompletionTimestamp() { return completion; } });
+    await assert.rejects(readRequestBrief(historyFuture.readers, { projectId, requestId }, normalClock()),
       /history source observation is later/u);
     let attentionReads = 0;
     const attentionFuture = fixture({ async getAttentionQueue() {
       return queue({ asOf: ++attentionReads === futureRead ? "2026-09-08T12:00:31.000001Z" : at });
-    } });
-    await assert.rejects(readRequestBrief(attentionFuture.readers, { projectId, requestId }, clock(at, completion)),
+    }, async getRequestBriefCompletionTimestamp() { return completion; } });
+    await assert.rejects(readRequestBrief(attentionFuture.readers, { projectId, requestId }, normalClock()),
       /attention source observation is later/u);
   }
 });
 
-it("fails safely when the injected clock throws, is invalid, or moves backwards", async () => {
+it("fails safely when acquisition or same-database completion clocks are invalid", async () => {
   const f = fixture();
-  await assert.rejects(readRequestBrief(f.readers, { projectId, requestId }, { now() { throw new Error("private clock detail"); }, monotonicMilliseconds() { return 0; } }),
-    /Request brief clock is unavailable or invalid/u);
-  await assert.rejects(readRequestBrief(f.readers, { projectId, requestId }, clock("invalid")), /clock is unavailable or invalid/u);
-  await assert.rejects(readRequestBrief(f.readers, { projectId, requestId }, clock(assembledAt, at)), /clock moved backwards/u);
+  await assert.rejects(readRequestBrief(f.readers, { projectId, requestId }, { monotonicMilliseconds() { throw new Error("private clock detail"); } }),
+    /acquisition clock is unavailable or invalid/u);
+  const invalid = fixture({ async getRequestBriefCompletionTimestamp() { return "invalid"; } });
+  await assert.rejects(readRequestBrief(invalid.readers, { projectId, requestId }, normalClock()), /completion clock source is invalid/u);
 });
 
 it("preserves a real pagination cursor from the bounded page", async () => {
@@ -291,19 +299,35 @@ it("stops launching reads after the total acquisition budget and awaits owned wo
     return history();
   } });
   await assert.rejects(readRequestBrief(f.readers, { projectId, requestId }, {
-    now: () => assembledAt, monotonicMilliseconds: () => elapsed,
+    monotonicMilliseconds: () => elapsed,
   }), /acquisition budget expired/u);
   assert.deepEqual(f.calls, ["history:budget"]);
   assert.equal(active, 0);
   assert.equal(completed, 1);
 });
 
-it("honors cancellation between owned reads without detaching the active read", async () => {
-  const controller = new AbortController(); let completed = false;
+it("does not return success when the final repeat-history read completes cancelled", async () => {
+  const controller = new AbortController(); let completed = false, historyReads = 0;
   const f = fixture({ async getRequestHistory() {
-    f.calls.push("history:cancel"); await Promise.resolve(); completed = true; controller.abort(); return history();
+    f.calls.push("history:cancel"); historyReads += 1; await Promise.resolve();
+    if (historyReads === 2) { completed = true; controller.abort(); }
+    return history();
   } });
   await assert.rejects(readRequestBrief(f.readers, { projectId, requestId }, normalClock(), controller.signal), /was cancelled/u);
-  assert.deepEqual(f.calls, ["history:cancel"]);
+  assert.equal(f.calls.at(-1), "history:cancel");
+  assert.equal(f.calls.includes("completion-clock"), false);
+  assert.equal(completed, true);
+});
+
+it("does not return success when the final owned clock read exhausts the launch budget", async () => {
+  let elapsed = 0, completed = false;
+  const f = fixture({ async getRequestBriefCompletionTimestamp() {
+    f.calls.push("completion-clock:budget"); await Promise.resolve(); completed = true;
+    elapsed = requestBriefAcquisitionBudgetMilliseconds; return assembledAt;
+  } });
+  await assert.rejects(readRequestBrief(f.readers, { projectId, requestId }, {
+    monotonicMilliseconds: () => elapsed,
+  }), /acquisition budget expired/u);
+  assert.equal(f.calls.at(-1), "completion-clock:budget");
   assert.equal(completed, true);
 });

@@ -84,7 +84,8 @@ function instrument(source: RequestBriefReaders) {
     cumulativeSourceReturnedUtf8Bytes += value === undefined ? 0 : bytes(value); return value;
   };
   return { readers: { getRequestHistory: wrap(source.getRequestHistory.bind(source)),
-    getMissionStatus: wrap(source.getMissionStatus.bind(source)), getAttentionQueue: wrap(source.getAttentionQueue.bind(source)) },
+    getMissionStatus: wrap(source.getMissionStatus.bind(source)), getAttentionQueue: wrap(source.getAttentionQueue.bind(source)),
+    getRequestBriefCompletionTimestamp: wrap(source.getRequestBriefCompletionTimestamp.bind(source)) },
     metrics: () => ({ sourceReaderCalls, cumulativeSourceReturnedUtf8Bytes }) };
 }
 
@@ -99,9 +100,7 @@ export async function runSyntheticRecoveryExercise() {
   if (!historyValue) throw new Error("synthetic history unexpectedly unavailable");
   const history = historyValue as RequestHistory;
   const briefSource = instrument(recoveryReaders()); const briefStart = performance.now();
-  const brief = await readRequestBrief(briefSource.readers, recoveryQuery, { now: (() => {
-    const samples = ["2026-09-08T10:59:00.000001Z", "2026-09-08T12:00:00.000001Z"]; let index = 0;
-    return () => samples[Math.min(index++, 1)]!; })(), monotonicMilliseconds: () => 0 });
+  const brief = await readRequestBrief(briefSource.readers, recoveryQuery, { monotonicMilliseconds: () => 0 });
   if (!brief) throw new Error("synthetic retained history unexpectedly unavailable");
   const briefLatency = performance.now() - briefStart;
   return { label: "synthetic_offline_exercise_not_fresh_reader_acceptance",

@@ -61,12 +61,11 @@ export function registerRequestBriefTool(server: McpServer, readers: RequestBrie
     try {
       const query = parseRequestHistoryQuery(input);
       const brief = await readRequestBrief(readers, query, {
-        now: () => new Date().toISOString().replace("Z", "000Z"),
         monotonicMilliseconds: () => performance.now(),
       }, extra.signal);
       if (brief === undefined) throw new Error("missing request brief");
       const validated = parseRequestBrief(query, brief);
-      const structuredContent = { brief: validated };
+      const structuredContent = z.object({ brief: briefSchema }).strict().parse({ brief: validated });
       snapshotJsonData(structuredContent, { maximumBytes: requestBriefMaximumBytes });
       return { structuredContent, content: [{ type: "text" as const,
         text: `Read a bounded brief for ${validated.missions.length} recorded mission association${validated.missions.length === 1 ? "" : "s"}. It is a non-authoritative projection; freshness is not assessed, unavailable fields are not empty, and attention nextCursor values identify additional recorded pages.` }] };

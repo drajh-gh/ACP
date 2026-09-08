@@ -30,6 +30,7 @@ function fixture() {
   let reads = 0, mutations = 0;
   const persistence: CounterpartMissionPersistence = {
     async getRequestHistory() { throw new Error("unexpected request history read"); },
+    async getRequestBriefCompletionTimestamp() { throw new Error("unexpected completion clock read"); },
     async getAttentionQueue() { throw new Error("unexpected attention read"); },
     async getProjectProfileProposal() { throw new Error("unexpected profile proposal read"); },
     async getProfileConfirmationRequest() { throw new Error("unexpected profile request read"); },

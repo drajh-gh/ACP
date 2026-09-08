@@ -25,6 +25,7 @@ const pluginVersion = "0.1.0";
 
 class MemoryCounterpartService implements CounterpartMissionPersistence {
   async getRequestHistory() { return undefined; }
+  async getRequestBriefCompletionTimestamp() { return "2026-09-08T12:00:00.000001Z"; }
   async getAttentionQueue() { return undefined; }
   async getProjectProfileProposal() { return undefined; }
   async getProfileConfirmationRequest() { return undefined; }

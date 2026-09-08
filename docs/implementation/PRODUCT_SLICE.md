@@ -146,9 +146,10 @@ source changes and bounded overflow. Its instrumentation is limited to synthetic
 reader calls, returned UTF-8 bytes and local harness latency; it is not human recovery
 time, worker openings, usage savings or an accepted outcome. The documented genuinely
 fresh-reader protocol has not been executed. Actual fresh-reader acceptance and any
-authenticated/public or live binding remain later increments. The seam bounds call
-count and awaits every call, but its injected readers must supply their own timeout
-and cancellation behavior; no production binding or end-to-end deadline is proven.
+operator-authenticated public or live binding remain later increments. The seam
+bounds call count and awaits every call, but its injected readers must supply their
+own timeout and in-flight cancellation behavior; no hard end-to-end deadline is
+proven.
 The separate [BB trial assessment](../research/BB_TRIAL_ASSESSMENT.md) records
 the checked version, local prerequisites, account checks and stop procedure.
 
@@ -165,14 +166,20 @@ to the existing retained readers. The existing bearer authenticates a trusted
 client, not an individual operator or project ACL; exact project, request and
 associated-mission checks therefore remain mandatory at every read. Assembly is
 sequential against the control API pool (`max: 4`, 3-second connection acquisition,
-5-second statement and 2-second lock limits), with at most 202 calls by shape and a
+5-second statement and 2-second lock limits), with at most 203 calls by shape and a
 4-second total acquisition budget that stops launching subsequent reads. Every
-started read is awaited. This is not a hard end-to-end deadline or network/database
-cancellation guarantee: MCP client cancellation is observed between reads, while
-the retained reader interfaces do not currently accept an abort signal for an
-already-started PostgreSQL query. Missing, changed and paginated observations remain
-explicit; malformed, overflowing, failed or budget-expired assembly returns one
-fixed error and no partial projection.
+started read is awaited. After the retained sources, one counted read-only query on
+the same bounded PostgreSQL pool formats `clock_timestamp()` at exact microsecond
+precision as the assembly completion time; host JavaScript milliseconds do not
+stand in for the database clock. A terminal budget/cancellation check follows the
+last owned read. The launch budget is not a hard end-to-end deadline or
+network/database cancellation guarantee: MCP client cancellation is observed
+between and after reads, while the retained reader interfaces do not currently
+pass an abort signal into an already-started PostgreSQL query. Missing, changed and
+paginated observations remain explicit; malformed, overflowing, failed,
+cancelled or budget-expired assembly returns one fixed error and no partial
+projection. This binding has fixture and HTTP transport evidence but no live
+PostgreSQL integration evidence yet.
 
 After the policy decisions below, implement versioned destination/scope proposals,
 obligations, communication plans and decisions.
