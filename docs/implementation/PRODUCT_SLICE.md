@@ -124,6 +124,14 @@ savings from the brief alone. The routing comparison is required before adopting
 an efficiency routing policy, not a prerequisite to the bounded read-only brief.
 Portal, another provider, fixed model routes and a universal file-size threshold
 are not selected by this amendment.
+
+Implementation status (2026-09-08): the first foundation now provides a pure,
+runtime-validated domain projection and deterministic assembler over exact request
+history, selected mission-status observations and recorded attention pages. It is
+not yet stored or exposed through API, MCP or UI. Destination decisions,
+obligations, communications and next-action authority remain explicitly
+unavailable; live source acquisition and the acceptance measurement remain later
+increments.
 The separate [BB trial assessment](../research/BB_TRIAL_ASSESSMENT.md) records
 the checked version, local prerequisites, account checks and stop procedure.
 

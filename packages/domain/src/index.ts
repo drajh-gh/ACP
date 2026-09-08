@@ -11,6 +11,7 @@ export * from "./profile-proposal.ts";
 export * from "./reconciliation.ts";
 export * from "./requests.ts";
 export * from "./request-history.ts";
+export * from "./request-brief.ts";
 export * from "./readiness.ts";
 export * from "./runtime.ts";
 export * from "./validation.ts";
