@@ -33,6 +33,11 @@ Use the committed lockfile and Node.js 24 in Linux cloud/CI. Setup and maintenan
 `bash scripts/codex-cloud-setup.sh` (180-second dependency-install limit).
 Do not install new dependencies or invoke a provider just to prepare this checkout.
 
+Verify `node --version` in the current shell. Some cloud runtime pickers expose
+only Node 22 although the image contains 24. Use the documented NVM fallback in
+`docs/development/CODEX_CLOUD.md` to activate installed Node 24; never bypass the
+setup version check or assume setup-shell PATH changes persisted into agent shells.
+
 Run targeted tests first, then these gates sequentially in Linux cloud:
 
 ```bash
