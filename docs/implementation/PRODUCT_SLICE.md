@@ -140,7 +140,8 @@ that ignore observation-time-only changes. It retains optional missing observati
 fails closed on invalid or failed sources, preserves attention pagination, and makes
 no cross-reader atomicity or current-freshness claim. An offline synthetic recovery
 exercise now compares independently authored retained facts against history-only and
-assembled-brief inputs, including negative controls, stale/missing observations,
+assembled-brief inputs, including negative controls, observed-but-unassessed and
+missing observations,
 source changes and bounded overflow. Its instrumentation is limited to synthetic
 reader calls, returned UTF-8 bytes and local harness latency; it is not human recovery
 time, worker openings, usage savings or an accepted outcome. The documented genuinely
