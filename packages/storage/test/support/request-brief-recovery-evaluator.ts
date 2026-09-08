@@ -34,30 +34,37 @@ function briefFacts(brief: RequestBrief & Mutable): Set<FactId> {
   const historyRef = brief.evidence[0];
   if (historyRef?.read === "get_request_history" && historyRef.selectors.projectId === expected.projectId
     && historyRef.selectors.requestId === expected.requestId && historyRef.observedAt === expected.observationAt
-    && historyRef.pin.length > 0 && sameArray(historyRef.fields,
+    && historyRef.pin === expected.historyPin && sameArray(historyRef.fields,
       ["request", "recordedAt", "missionAssociations", "coverage", "freshness", "authority"])) found.add("history_reference");
   const first = brief.missions[0], second = brief.missions[1];
   if (brief.coverage.history === "recorded_associations_only" && brief.coverage.missionStatus === "selected_observations_only"
     && brief.coverage.attention === "selected_recorded_pages_only" && first?.attention.availability === "observed"
     && first.attention.coverage === "recorded_items_only") found.add("coverage");
-  if (first?.observation?.observedAt === expected.observationAt && first.observation.freshness === "unknown"
+  if (first?.observation?.state === expected.firstMissionState && first.observation.observedAt === expected.observationAt
+    && first.observation.freshness === "unknown"
     && brief.freshness === "not_assessed") found.add("observed_unassessed");
   if (second?.observation === null && second.attention.availability === "unavailable"
     && brief.issues.includes("missing_mission_status") && brief.issues.includes("missing_attention")) found.add("missing_observations");
   const change = brief.sourceChanges.find(item => item.source === "mission_status" && item.missionId === expected.missionIds[0]);
   const missionRef = first?.observation?.sourceReference;
-  if (change && change.pinBefore.length > 0 && change.pinAfter.length > 0 && change.pinBefore !== change.pinAfter
+  const missionEvidence = brief.evidence.find(item => item.read === "get_mission_status"
+    && item.selectors.missionId === expected.missionIds[0]);
+  if (change && change.pinBefore === expected.firstMissionPinBefore && change.pinAfter === expected.firstMissionPinAfter
     && missionRef?.read === "get_mission_status" && missionRef.selectors.missionId === expected.missionIds[0]
     && missionRef.observedAt === expected.observationAt && missionRef.pin === change.pinBefore
+    && missionEvidence?.pin === missionRef.pin && missionEvidence.observedAt === missionRef.observedAt
     && sameArray(missionRef.fields, ["state", "assessment"]) && brief.issues.includes("source_changed_during_assembly")) {
     found.add("actual_source_change");
   }
   if (first?.attention.availability === "observed") {
     const gap = first.attention.items.find(entry => entry.item.explanation === expected.evidenceGap);
     const ref = first.attention.sourceReference;
+    const attentionEvidence = brief.evidence.find(item => item.read === "get_mission_attention"
+      && item.selectors.missionId === expected.missionIds[0]);
     if (gap && gap.item.evidenceIds.length === 0 && gap.item.allowedResponses.includes("Record explicit evidence gap")
       && ref.read === "get_mission_attention" && ref.selectors.projectId === expected.projectId
-      && ref.selectors.missionId === expected.missionIds[0] && ref.pin.length > 0
+      && ref.selectors.missionId === expected.missionIds[0] && ref.pin === expected.firstAttentionPin
+      && attentionEvidence?.pin === ref.pin && attentionEvidence.observedAt === ref.observedAt
       && sameArray(ref.fields, ["items", "nextCursor", "coverage", "freshness", "authority"])) found.add("decisive_evidence_gap");
     if (first.attention.nextCursor === expected.overflowCursor && first.attention.query.limit === 20) found.add("overflow");
     if (first.attention.authority === "not_granted") found.add("authority_boundaries");
@@ -103,7 +110,18 @@ export async function runSyntheticRecoveryExercise() {
     negativeControls: [
       control("wrong_path_decoy", value => { const original = value.originalRequest as Mutable; original.summary = "altered"; value.decoy = expected.originalWording; }, brief),
       control("contradictory_authority", value => { value.authority = "granted"; }, brief),
-      control("altered_source_pin", value => { (((value.missions as Mutable[])[0]!.observation as Mutable).sourceReference as Mutable).pin = "wrong-pin"; }, brief),
+      control("forged_history_pin", value => { (value.evidence as Mutable[])[0]!.pin = "sha256:forged-history"; }, brief),
+      control("forged_mission_pins", value => {
+        const mission = (value.missions as Mutable[])[0]!, observation = mission.observation as Mutable;
+        (observation.sourceReference as Mutable).pin = "sha256:fake-a";
+        (value.evidence as Mutable[])[1]!.pin = "sha256:fake-a";
+        const change = (value.sourceChanges as Mutable[])[0]!; change.pinBefore = "sha256:fake-a"; change.pinAfter = "sha256:fake-b";
+      }, brief),
+      control("forged_attention_pin", value => {
+        (((value.missions as Mutable[])[0]!.attention as Mutable).sourceReference as Mutable).pin = "sha256:forged-attention";
+        (value.evidence as Mutable[])[2]!.pin = "sha256:forged-attention";
+      }, brief),
+      control("wrong_mission_state", value => { ((value.missions as Mutable[])[0]!.observation as Mutable).state = "verifying"; }, brief),
       control("altered_coverage", value => { (value.coverage as Mutable).history = "complete"; }, brief),
       control("drop_decisive_gap", value => { ((((value.missions as Mutable[])[0]!.attention as Mutable).items as Mutable[])[0]!.item as Mutable).explanation = "Review attachment"; }, brief),
       control("misleading_empty_obligations", value => { value.unavailable = ["destination_decisions", "communications"]; value.obligations = []; }, brief),

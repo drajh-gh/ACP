@@ -26,7 +26,9 @@ it("reports complete fact failures for wrong-path, authority, pin, coverage, gap
   const result = await runSyntheticRecoveryExercise();
   assert.deepEqual(result.negativeControls.map(control => [control.name, control.missingFactIds]), [
     ["wrong_path_decoy", ["original_wording"]], ["contradictory_authority", ["authority_boundaries"]],
-    ["altered_source_pin", ["actual_source_change"]], ["altered_coverage", ["coverage"]],
+    ["forged_history_pin", ["history_reference"]], ["forged_mission_pins", ["actual_source_change"]],
+    ["forged_attention_pin", ["decisive_evidence_gap"]], ["wrong_mission_state", ["observed_unassessed"]],
+    ["altered_coverage", ["coverage"]],
     ["drop_decisive_gap", ["decisive_evidence_gap"]], ["misleading_empty_obligations", ["unavailable_records"]],
   ]);
 });

@@ -13,7 +13,8 @@ node --experimental-strip-types scripts/evaluate-request-brief-recovery.mjs
 
 Separate modules independently author retained sources and the expected fact
 inventory. Field-specific structural checks cover exact project/request/mission IDs,
-original wording, scoped references and pins, coverage, the decisive explicit
+original wording, scoped references and independently reviewed canonical fixture
+pins (canonical source fingerprints excluding only volatile `asOf`), coverage, the decisive explicit
 unavailable-evidence gap, observed-but-unassessed and missing observations,
 changed source pins, pagination overflow, unavailable decisions/obligations/
 communications and unavailable next-action authority. Negative controls alter the
