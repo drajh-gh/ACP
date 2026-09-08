@@ -138,8 +138,15 @@ the exact request selector before I/O, reads only recorded associated missions t
 the retained history, mission-status and attention readers, and derives semantic pins
 that ignore observation-time-only changes. It retains optional missing observations,
 fails closed on invalid or failed sources, preserves attention pagination, and makes
-no cross-reader atomicity or current-freshness claim. Fresh-reader recovery measurement
-and any authenticated/public binding remain later increments. The seam bounds call
+no cross-reader atomicity or current-freshness claim. An offline synthetic recovery
+exercise now compares independently authored retained facts against history-only and
+assembled-brief inputs, including negative controls, observed-but-unassessed and
+missing observations,
+source changes and bounded overflow. Its instrumentation is limited to synthetic
+reader calls, returned UTF-8 bytes and local harness latency; it is not human recovery
+time, worker openings, usage savings or an accepted outcome. The documented genuinely
+fresh-reader protocol has not been executed. Actual fresh-reader acceptance and any
+authenticated/public or live binding remain later increments. The seam bounds call
 count and awaits every call, but its injected readers must supply their own timeout
 and cancellation behavior; no production binding or end-to-end deadline is proven.
 The separate [BB trial assessment](../research/BB_TRIAL_ASSESSMENT.md) records
