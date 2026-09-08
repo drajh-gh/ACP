@@ -14,6 +14,7 @@
         "get_mission_status",
         "get_mission_attention",
         "get_request_history",
+        "get_request_brief",
         "get_project_profile_proposal",
         "get_profile_confirmation_request",
         "get_project_readiness",

@@ -167,7 +167,7 @@ describe("authenticated counterpart MCP", () => {
       const tools = await client.listTools();
       assert.deepEqual(
         tools.tools.map((tool) => tool.name).sort(),
-        ["create_mission", "get_mission_attention", "get_mission_status", "get_profile_confirmation_request", "get_project_profile_proposal", "get_project_readiness", "get_request_history", "list_active_missions"],
+        ["create_mission", "get_mission_attention", "get_mission_status", "get_profile_confirmation_request", "get_project_profile_proposal", "get_project_readiness", "get_request_brief", "get_request_history", "list_active_missions"],
       );
 
       const created = await client.callTool({

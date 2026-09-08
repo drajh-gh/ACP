@@ -101,7 +101,7 @@ export async function runSyntheticRecoveryExercise() {
   const briefSource = instrument(recoveryReaders()); const briefStart = performance.now();
   const brief = await readRequestBrief(briefSource.readers, recoveryQuery, { now: (() => {
     const samples = ["2026-09-08T10:59:00.000001Z", "2026-09-08T12:00:00.000001Z"]; let index = 0;
-    return () => samples[Math.min(index++, 1)]!; })() });
+    return () => samples[Math.min(index++, 1)]!; })(), monotonicMilliseconds: () => 0 });
   if (!brief) throw new Error("synthetic retained history unexpectedly unavailable");
   const briefLatency = performance.now() - briefStart;
   return { label: "synthetic_offline_exercise_not_fresh_reader_acceptance",

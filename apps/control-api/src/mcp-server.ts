@@ -11,6 +11,7 @@ import { registerReadinessTool } from "./readiness-tool.ts";
 import { registerProfileProposalTools } from "./profile-proposal-tool.ts";
 import { registerAttentionTool } from "./attention-tool.ts";
 import { registerRequestHistoryTool } from "./request-history-tool.ts";
+import { registerRequestBriefTool } from "./request-brief-tool.ts";
 import { controlApiVersion } from "./config.ts";
 
 const stableId = (prefix: string) =>
@@ -189,6 +190,7 @@ export function createCounterpartMcpServer(
   registerProfileProposalTools(server, persistence);
   registerAttentionTool(server, persistence);
   registerRequestHistoryTool(server, persistence);
+  registerRequestBriefTool(server, persistence);
   return server;
 }
 

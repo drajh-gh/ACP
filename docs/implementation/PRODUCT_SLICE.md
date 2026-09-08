@@ -160,6 +160,20 @@ tokens: this boundary checks their internal references and change declarations b
 does not verify remote source content, perform I/O, or expose an API, worker, MCP,
 UI, database or provider binding.
 
+The authenticated `get_request_brief` MCP counterpart now binds that private seam
+to the existing retained readers. The existing bearer authenticates a trusted
+client, not an individual operator or project ACL; exact project, request and
+associated-mission checks therefore remain mandatory at every read. Assembly is
+sequential against the control API pool (`max: 4`, 3-second connection acquisition,
+5-second statement and 2-second lock limits), with at most 202 calls by shape and a
+4-second total acquisition budget that stops launching subsequent reads. Every
+started read is awaited. This is not a hard end-to-end deadline or network/database
+cancellation guarantee: MCP client cancellation is observed between reads, while
+the retained reader interfaces do not currently accept an abort signal for an
+already-started PostgreSQL query. Missing, changed and paginated observations remain
+explicit; malformed, overflowing, failed or budget-expired assembly returns one
+fixed error and no partial projection.
+
 After the policy decisions below, implement versioned destination/scope proposals,
 obligations, communication plans and decisions.
 Bind the board's exact projection and stale-action checks to real retained records.

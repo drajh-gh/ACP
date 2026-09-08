@@ -20,6 +20,9 @@ import { parseCounterpartMissionStatus, type CounterpartMissionStatus } from "./
 
 export const requestBriefAttentionPageSize = 20;
 export const requestBriefMaximumReaderCalls = 2 + (requestBriefMissionLimit * 4);
+/** Stops this sequential assembler from starting additional pool acquisitions.
+ * An already-started reader is still awaited and retains its own database limits. */
+export const requestBriefAcquisitionBudgetMilliseconds = 4_000;
 
 /** The deliberately narrow private read boundary used by request-brief assembly. */
 export interface RequestBriefReaders {
@@ -30,6 +33,7 @@ export interface RequestBriefReaders {
 
 export interface RequestBriefClock {
   now(): string;
+  monotonicMilliseconds(): number;
 }
 
 /** Acquires independent recorded snapshots sequentially. The result does not
@@ -40,12 +44,18 @@ export async function readRequestBrief(
   readers: RequestBriefReaders,
   queryValue: unknown,
   clock: RequestBriefClock,
+  signal?: AbortSignal,
 ): Promise<RequestBrief | undefined> {
   // Validate the complete selector and an initial clock sample before reader I/O.
   const query = parseRequestHistoryQuery(queryValue);
   const startedAt = sampleClock(clock);
+  const acquisitionStartedAt = sampleMonotonicClock(clock);
+  const readWithinBudget = <T>(operation: () => Promise<T>, source: string) => {
+    assertCanLaunch(clock, acquisitionStartedAt, signal);
+    return read(operation, source);
+  };
 
-  const firstHistoryValue = await read(() => readers.getRequestHistory(query), "history");
+  const firstHistoryValue = await readWithinBudget(() => readers.getRequestHistory(query), "history");
   if (firstHistoryValue === undefined) return undefined;
   const history = parseHistory(query, firstHistoryValue);
   if (history.missionAssociations.length > requestBriefMissionLimit) {
@@ -56,11 +66,11 @@ export async function readRequestBrief(
   const attention = [];
   for (const association of history.missionAssociations) {
     const missionId = association.missionId;
-    const firstStatusValue = await read(() => readers.getMissionStatus(missionId), "mission status");
+    const firstStatusValue = await readWithinBudget(() => readers.getMissionStatus(missionId), "mission status");
     if (firstStatusValue !== undefined) {
       const firstStatus = parseStatus(firstStatusValue, query, missionId);
       const firstPin = semanticPin(firstStatus, "asOf");
-      const secondStatusValue = await read(() => readers.getMissionStatus(missionId), "mission status");
+      const secondStatusValue = await readWithinBudget(() => readers.getMissionStatus(missionId), "mission status");
       if (secondStatusValue === undefined) throw unavailable("mission status");
       const secondStatus = parseStatus(secondStatusValue, query, missionId);
       missionObservations.push({
@@ -83,11 +93,11 @@ export async function readRequestBrief(
     }
 
     const attentionQuery = { projectId: query.projectId, missionId, limit: requestBriefAttentionPageSize };
-    const firstAttentionValue = await read(() => readers.getAttentionQueue(attentionQuery), "attention");
+    const firstAttentionValue = await readWithinBudget(() => readers.getAttentionQueue(attentionQuery), "attention");
     if (firstAttentionValue !== undefined) {
       const firstAttention = parseAttention(attentionQuery, firstAttentionValue);
       const firstPin = semanticPin(firstAttention, "asOf");
-      const secondAttentionValue = await read(() => readers.getAttentionQueue(attentionQuery), "attention");
+      const secondAttentionValue = await readWithinBudget(() => readers.getAttentionQueue(attentionQuery), "attention");
       if (secondAttentionValue === undefined) throw unavailable("attention");
       const secondAttention = parseAttention(attentionQuery, secondAttentionValue);
       attention.push({ queue: firstAttention, pinBefore: firstPin, pinAfter: semanticPin(secondAttention, "asOf"),
@@ -95,7 +105,7 @@ export async function readRequestBrief(
     }
   }
 
-  const secondHistoryValue = await read(() => readers.getRequestHistory(query), "history");
+  const secondHistoryValue = await readWithinBudget(() => readers.getRequestHistory(query), "history");
   if (secondHistoryValue === undefined) throw unavailable("history");
   const secondHistory = parseHistory(query, secondHistoryValue);
   const assembledAt = sampleClock(clock);
@@ -126,6 +136,23 @@ async function read<T>(operation: () => Promise<T>, source: string): Promise<T> 
 function sampleClock(clock: RequestBriefClock): string {
   try { return parseCanonicalTimestamp(clock.now()); }
   catch { throw new Error("Request brief clock is unavailable or invalid."); }
+}
+
+function sampleMonotonicClock(clock: RequestBriefClock): number {
+  try {
+    const value = clock.monotonicMilliseconds();
+    if (!Number.isFinite(value)) throw new TypeError("finite clock required");
+    return value;
+  } catch { throw new Error("Request brief acquisition clock is unavailable or invalid."); }
+}
+
+function assertCanLaunch(clock: RequestBriefClock, startedAt: number, signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw new Error("Request brief acquisition was cancelled.");
+  const elapsed = sampleMonotonicClock(clock) - startedAt;
+  if (elapsed < 0) throw new Error("Request brief acquisition clock moved backwards.");
+  if (elapsed >= requestBriefAcquisitionBudgetMilliseconds) {
+    throw new Error("Request brief acquisition budget expired.");
+  }
 }
 
 function assertObservedBy(source: string, observedAt: string, assembledAt: string): void {

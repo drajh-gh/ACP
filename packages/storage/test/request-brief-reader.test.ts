@@ -4,6 +4,7 @@ import { createStableId, type StableId } from "@acp/domain";
 import {
   readRequestBrief,
   requestBriefAttentionPageSize,
+  requestBriefAcquisitionBudgetMilliseconds,
   requestBriefMaximumReaderCalls,
   type RequestBriefClock,
   type RequestBriefReaders,
@@ -20,7 +21,7 @@ const baseStatus = { ...statusFixture(), projectId, missionId, asOf: at };
 
 function clock(...samples: string[]): RequestBriefClock {
   let index = 0;
-  return { now() { return samples[Math.min(index++, samples.length - 1)]!; } };
+  return { now() { return samples[Math.min(index++, samples.length - 1)]!; }, monotonicMilliseconds() { return 0; } };
 }
 
 function normalClock() { return clock("2026-09-08T11:59:00.000001Z", assembledAt); }
@@ -259,7 +260,7 @@ it("rejects future timestamps independently on first and repeat private reads", 
 
 it("fails safely when the injected clock throws, is invalid, or moves backwards", async () => {
   const f = fixture();
-  await assert.rejects(readRequestBrief(f.readers, { projectId, requestId }, { now() { throw new Error("private clock detail"); } }),
+  await assert.rejects(readRequestBrief(f.readers, { projectId, requestId }, { now() { throw new Error("private clock detail"); }, monotonicMilliseconds() { return 0; } }),
     /Request brief clock is unavailable or invalid/u);
   await assert.rejects(readRequestBrief(f.readers, { projectId, requestId }, clock("invalid")), /clock is unavailable or invalid/u);
   await assert.rejects(readRequestBrief(f.readers, { projectId, requestId }, clock(assembledAt, at)), /clock moved backwards/u);
@@ -278,4 +279,31 @@ it("preserves a real pagination cursor from the bounded page", async () => {
   const brief = await readRequestBrief(f.readers, { projectId, requestId }, normalClock());
   const attention = brief?.missions[0]?.attention;
   assert.equal(attention?.availability === "observed" ? attention.nextCursor : null, cursor);
+});
+
+it("stops launching reads after the total acquisition budget and awaits owned work", async () => {
+  let elapsed = 0, active = 0, completed = 0;
+  const f = fixture({ async getRequestHistory() {
+    f.calls.push("history:budget"); active += 1;
+    await Promise.resolve();
+    elapsed = requestBriefAcquisitionBudgetMilliseconds;
+    active -= 1; completed += 1;
+    return history();
+  } });
+  await assert.rejects(readRequestBrief(f.readers, { projectId, requestId }, {
+    now: () => assembledAt, monotonicMilliseconds: () => elapsed,
+  }), /acquisition budget expired/u);
+  assert.deepEqual(f.calls, ["history:budget"]);
+  assert.equal(active, 0);
+  assert.equal(completed, 1);
+});
+
+it("honors cancellation between owned reads without detaching the active read", async () => {
+  const controller = new AbortController(); let completed = false;
+  const f = fixture({ async getRequestHistory() {
+    f.calls.push("history:cancel"); await Promise.resolve(); completed = true; controller.abort(); return history();
+  } });
+  await assert.rejects(readRequestBrief(f.readers, { projectId, requestId }, normalClock(), controller.signal), /was cancelled/u);
+  assert.deepEqual(f.calls, ["history:cancel"]);
+  assert.equal(completed, true);
 });
