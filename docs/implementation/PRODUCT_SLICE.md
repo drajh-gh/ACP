@@ -133,8 +133,15 @@ obligations, communications and next-action authority remain explicitly
 unavailable. The projection distinguishes unavailable attention from an observed
 empty or paginated page, retains executable scoped read selectors and source-change
 pins, reports missing and stale issues independently, and refuses association or
-byte overflow as a whole result. Live source acquisition and the acceptance
-measurement remain later increments.
+byte overflow as a whole result. A private sequential acquisition seam now validates
+the exact request selector before I/O, reads only recorded associated missions through
+the retained history, mission-status and attention readers, and derives semantic pins
+that ignore observation-time-only changes. It retains optional missing observations,
+fails closed on invalid or failed sources, preserves attention pagination, and makes
+no cross-reader atomicity or current-freshness claim. Fresh-reader recovery measurement
+and any authenticated/public binding remain later increments. The seam bounds call
+count and awaits every call, but its injected readers must supply their own timeout
+and cancellation behavior; no production binding or end-to-end deadline is proven.
 The separate [BB trial assessment](../research/BB_TRIAL_ASSESSMENT.md) records
 the checked version, local prerequisites, account checks and stop procedure.
 

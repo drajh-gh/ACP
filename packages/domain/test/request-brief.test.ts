@@ -229,6 +229,36 @@ it("refuses source-byte overflow as a whole result", () => {
   assert.ok(JSON.stringify(input).length > requestBriefSourceMaximumBytes);
 });
 
+it("refuses output-byte overflow even when the source envelope is within its separate bound", () => {
+  const input = sources();
+  const missionIds = Array.from({ length: 20 }, (_, index) =>
+    `mis_00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}` as StableId<"mission">);
+  Object.assign(input.history, { missionAssociations: missionIds.map((id, index) => ({
+    missionId: id, reason: `Association ${index}`, recordedAt: observedAt,
+  })) });
+  Object.assign(input, { missionObservations: [], attention: missionIds.map((id, index) => ({
+    queue: attentionPage({ missionId: id, items: [{ item: {
+      itemId: `ati_00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}` as StableId<"attentionItem">,
+      projectId, missionIds: [id], type: "material_ambiguity", urgency: "normal", title: `Review ${index}`,
+      explanation: "x".repeat(3500), whyHumanIsNeeded: "Review is required.", evidenceIds: [], allowedResponses: ["Review"],
+      deduplicationKey: `output:${index}`, quietHoursDisposition: "Not assessed.",
+    }, recordedAt: observedAt, expiry: "not_expiring" }] }),
+    pinBefore: `attention-${index}`, pinAfter: `attention-${index}`,
+  })) });
+  assert.ok(JSON.stringify(input).length < requestBriefSourceMaximumBytes);
+  assert.throws(() => assembleRequestBrief(input), /bounded snapshot/u);
+});
+
+it("reports a history-pin-only change", () => {
+  const input = sources();
+  Object.assign(input, { historyPinAfter: "history-revision-2" });
+  const brief = assembleRequestBrief(input);
+  assert.deepEqual(brief.sourceChanges, [{
+    source: "request_history", missionId: null, pinBefore: "history-revision-1", pinAfter: "history-revision-2",
+  }]);
+  assert.ok(brief.issues.includes("source_changed_during_assembly"));
+});
+
 it("keeps unsupported records and every action authority explicitly unavailable", () => {
   const brief = assembleRequestBrief(sources());
   assert.deepEqual(brief.unavailable, ["destination_decisions", "obligations", "communications"]);
