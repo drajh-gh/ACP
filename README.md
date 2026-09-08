@@ -1,7 +1,7 @@
 # Agentic Control Plane
 
 ACP is an always-on control plane for durable, policy-governed Codex work. The
-repository is being implemented from [specification version 1.0.0](SPECIFICATION.md).
+repository is being implemented from [specification version 1.0.2](SPECIFICATION.md).
 M0 and M1 are complete. M2 and independent M3/M5 foundations are in progress; the current candidate is not yet a
 deployed autonomous service.
 
@@ -16,6 +16,10 @@ browser to review synthetic requests and decisions. It needs no server or login
 and cannot authorize or execute work. See the [review guide](prototypes/operations/README.md).
 
 ## Current slice
+
+For off-device development, see [Codex cloud setup](docs/development/CODEX_CLOUD.md).
+It shares the locked dependency setup with Linux CI and keeps Windows-only and
+live integration evidence separate from routine cloud checks.
 
 - npm workspaces with TypeScript source
 - stable, typed domain identifiers

@@ -7,6 +7,11 @@ delivery phase and selected ACP as the current name on 2026-09-06.
 
 ## Source contract
 
+Current intended-behavior versions (2026-09-08): technical specification 1.0.2,
+product specification 0.5, and UX/UI specification 0.3. Read the current files,
+including approved working-tree amendments, before selecting the next increment;
+these version pins do not establish implemented behavior or approve open policies.
+
 - [SPECIFICATION.md](../../SPECIFICATION.md) remains the technical execution and
   safety contract. No worker isolation, effect or evidence guard is relaxed.
 - [ACP product specification](../ACP_PRODUCT_SPECIFICATION.md) defines the
@@ -84,6 +89,43 @@ multiple explicitly distinct requests, and a request may link multiple missions.
 The authenticated counterpart `get_request_history` read returns one bounded recorded snapshot; it
 does not assess current mission state or derive a board's action priority.
 No request writer endpoint, browser binding, source assignment or execution is enabled.
+
+#### Next bounded increment: request brief (proposed, 2026-09-08)
+
+Add a read-only counterpart brief using the immutable request history and separately
+permitted mission/attention observations. Follow technical specification section
+16.5 and product scenarios ACP-PRODUCT-33–35. Preserve each source's identity,
+coverage, observation time and authority limits; do not reinterpret
+`get_request_history` as a live status or priority API. Records not implemented yet,
+including destination decisions, obligations and communications, remain unavailable.
+Do not add an editable summary ledger or infer empty obligations from missing data.
+
+Exercise a fresh-reader recovery case, stale and missing records, bounded overflow,
+cross-project denial and source changes during assembly. The brief must retain
+known evidence while exposing any inability to establish a coherent current view.
+It grants no creation, execution, approval or closure authority. Measure recovery
+time and unnecessary task/source openings against the existing history-only read.
+This increment can precede the open closure/recurrence policies; live board binding
+still needs its separately authenticated operator surface. UX-17–18 are added
+requirements, not retroactive passing claims for the existing prototype.
+
+The workflow-video review also clarifies durable wake reasons, quiet notifications
+and usage reporting. Verify the existing primitives against those requirements
+before adding runtime machinery. Model/effort routing, automated client integration
+and BB/Herdr adoption remain research decisions, not dependencies of this increment.
+
+Apply technical section 16.2.1 to the request brief and its retrieval responses:
+retain source pins and coverage, expose overflow through continuation or refusal,
+and return scoped evidence references instead of broad source or log payloads.
+Technical sections 26.3.1 and 29.2 and ACP-PRODUCT-36 govern subsequent efficiency
+evaluation and complete delegation accounting. Reconcile existing contracts before
+adding fields or runtime machinery. Keep unavailable usage explicit; do not claim
+savings from the brief alone. The routing comparison is required before adopting
+an efficiency routing policy, not a prerequisite to the bounded read-only brief.
+Portal, another provider, fixed model routes and a universal file-size threshold
+are not selected by this amendment.
+The separate [BB trial assessment](../research/BB_TRIAL_ASSESSMENT.md) records
+the checked version, local prerequisites, account checks and stop procedure.
 
 After the policy decisions below, implement versioned destination/scope proposals,
 obligations, communication plans and decisions.

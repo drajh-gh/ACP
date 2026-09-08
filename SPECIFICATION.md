@@ -5,8 +5,8 @@
 | Field | Value |
 |---|---|
 | Status | Proposed build baseline |
-| Specification version | 1.0.0 |
-| Date | 2026-09-04 |
+| Specification version | 1.0.2 |
+| Date | 2026-09-08 |
 | Initial owner and operator | David |
 | Initial deployment model | Single-user, hosted, multi-project |
 | Primary interaction client | Codex |
@@ -15,6 +15,10 @@
 This document specifies a new agentic operating system for directing Codex across product management, engineering, operations, communication, knowledge management, and recurring project work. It is intentionally independent of the Poppy repository and runtime.
 
 The words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** are normative. Examples are illustrative unless a requirement explicitly incorporates them.
+
+Revision 1.0.1 clarifies request continuity, waiting, attention and usage reporting following the workflow-video review. It does not select a new runtime or expand V1 provider scope. The [product specification](docs/ACP_PRODUCT_SPECIFICATION.md) defines the request and outcome experience; the [UX/UI specification](docs/AIRPORT_UX_UI_SPECIFICATION.md) defines its presentation. Their explicitly proposed policies remain open. Implementation status and sequencing belong in the [product delivery slice](docs/implementation/PRODUCT_SLICE.md), not in these intended-behavior requirements.
+
+Revision 1.0.2 adds bounded retrieval throughout execution, complete delegation usage accounting, and comparative efficiency evaluation. It sets no savings target, fixed model route, new provider dependency, or universal file-size cutoff.
 
 ---
 
@@ -1043,6 +1047,14 @@ The packet builder SHALL prefer:
 - Exact source excerpts necessary for the task over broad raw dumps.
 - Explicit conflicts and unknowns over false synthesis.
 
+### 16.2.1 Retrieval throughout execution
+
+Context bounds SHALL apply to tool responses and worker handoffs throughout execution, not only to the initial packet. Retrieval tools SHALL support task-scoped excerpts or selected fields, configurable response bounds, and explicit continuation or whole-result refusal when a requested result exceeds those bounds. Responses MUST identify source identity and revision or observation time, coverage, omitted material, and unavailable fields; they MUST NOT silently truncate or imply that an incomplete result establishes absence.
+
+Large logs, source collections, and generated artifacts SHOULD remain behind scoped references, with only relevant excerpts, findings, and artifact metadata returned to the requesting model. Deterministic filtering and extraction SHOULD precede model-based summarization where they can answer the question faithfully. Unchanged evidence MAY be reused while its source pins and freshness remain valid.
+
+Summaries remain derivative evidence. Workers MUST retrieve the relevant exact source when a summary cannot support an edit, resolve a conflict, or establish a consequential conclusion. Retrieval bounds MUST preserve a path to that evidence within capability and resource limits; inability to obtain it SHALL remain an explicit evidence gap.
+
 ### 16.3 Worker result contract
 
 Every worker SHALL return a schema-validated result containing:
@@ -1066,6 +1078,14 @@ Free-form narrative MAY accompany the result but SHALL NOT replace required fiel
 On restart, the orchestrator SHALL reconstruct runnable nodes from PostgreSQL, re-establish or recover leases, generate fresh context packets, and reconcile any interrupted effects. Previously verified effects MUST NOT be repeated.
 
 The test suite MUST deliberately terminate workers at node and effect boundaries to prove this behavior.
+
+### 16.5 Request continuity and derived briefs
+
+Where a durable request coordinates missions, the counterpart and console SHALL derive a bounded request brief from retained records. It SHALL identify the original request and project, linked missions, recorded decisions and outstanding work, relevant observations and their timestamps, and the supported next action or missing information. Approved scope and pending proposals MUST remain distinct from the original reported wording.
+
+The brief is a read projection, not a new authority or an editable replacement for operational history. It MUST identify its coverage, omitted or unavailable material, and whether freshness has been assessed. A history-only read MUST NOT imply current readiness, priority, approval validity or completion. An unavailable obligation or communication record MUST NOT be rendered as no work due. Overflow SHALL be explicit through a bounded continuation contract or whole-result refusal, never silent truncation.
+
+A fresh worker SHALL receive the applicable brief and scoped evidence references with its node-specific context packet. Cached summaries MUST be invalidated or marked stale when their source revisions change; they MUST NOT erase conflicts or authorize an effect. Human-readable working notes MAY support navigation, but PostgreSQL records remain authoritative for decisions, obligations and execution receipts.
 
 ---
 
@@ -1151,6 +1171,8 @@ The workflow runtime SHALL persist subscriptions to:
 - Approval decisions.
 
 A waiting mission consumes no active model worker. Periodic polling is allowed only when the external system offers no event or reliable long-polling interface, and it SHALL use bounded backoff without invoking an agent for unchanged state.
+
+Each wait SHALL retain its owning request/mission, relevant event condition, timeout or review deadline, and cancellation/stop condition. Resumption SHALL record the triggering event or deadline, preserve request identity, and revalidate the eligible next step and its authority. Duplicate or unchanged signals MUST NOT create duplicate work or recurring model narration. A missed-event or reconnect gap SHALL be reconciled before claiming current state.
 
 ---
 
@@ -1246,6 +1268,8 @@ type AttentionItem = {
 - Independent mission branches SHOULD continue while another branch awaits input.
 - The console SHALL provide a live queue; Slack SHALL carry actionable internal notifications.
 - External stakeholder messages remain separate approved effects.
+
+Attention priority SHALL reflect configured impact, urgency, relevant waiting time and consequence of delay, with an inspectable reason. Worker count and worker completion alone MUST NOT manufacture urgency. Routine progress belongs in the live view; notifications require a material change, actionable failure, requested completion notice or required human decision under the configured notification policy.
 
 The initial console MAY limit mission editing, but it MUST support approval/rejection, credential onboarding, and kill-switch actions because these are control functions rather than conversational authoring.
 
@@ -1893,6 +1917,16 @@ Required adversarial scenarios include:
 - Runtime version mismatch.
 - Two missions attempting to write the same target.
 - Quiet-hours critical and non-critical events.
+- Fresh-worker recovery from a request brief with unavailable obligations or stale evidence; neither becomes a clean completion claim.
+- Duplicate wake signals and a reconnect gap; request identity is retained and effects are not repeated.
+- Unchanged background progress; no repeated human notification or agent polling turn occurs.
+- Missing usage data or an unavailable subscription entitlement; neither becomes zero cost nor an implicit API fallback.
+
+### 26.3.1 Retrieval and delegation efficiency
+
+Before adopting or changing an efficiency routing policy, evaluation SHALL compare direct scoped retrieval with delegated reading on representative tasks. The initial cases SHALL cover repository exploration, a mechanical edit, and debugging, including a case where a summary omits a source detail essential to the correct decision. Evaluation SHALL establish whether the worker retrieves the missing evidence or reports the gap rather than accepting the summary as sufficient.
+
+Comparisons SHALL use equivalent task scope, source revisions, and acceptance criteria and record evidence coverage, correctness, total observed model usage, latency, and rework, including retries, escalation, and verification. Measured counts and estimates SHALL be distinguished, with the estimation method and missing coverage disclosed. Main-model context reduction alone MUST NOT be reported as total token or cost savings. Adoption SHALL depend on accepted outcomes and measured tradeoffs; no fixed savings percentage or default delegation threshold is established by these cases.
 
 ### 26.4 Learning policy
 
@@ -2017,11 +2051,19 @@ Initial budgets SHALL be measurement-oriented rather than based on unsupported a
 - Estimated API cost when API billing applies.
 - Infrastructure allocation estimates.
 
+Mission usage aggregates SHALL include attributed counterpart/coordinator work, every delegated worker, retries, escalation, and verification, without double-counting the same usage record across parent and child runs. Where work is shared or cannot be attributed, its scope and allocation method or attribution gap SHALL be explicit rather than assigned wholly to each mission or omitted from a claimed complete total. Missing component usage SHALL make the aggregate explicitly partial.
+
+Reporting SHALL distinguish main-model context volume, total model token usage, subscription quota observations, and monetary cost. Input, cached-input, output, and reasoning usage SHALL be identified where the runtime exposes them, preserving whether a reported category is a subset of another count. Moving work to another model MUST NOT be presented as eliminating that model's usage or cost.
+
 Invoking a newly enabled metered provider or exceeding an explicit configured spend envelope is an approval-first effect.
+
+Usage records SHALL distinguish subscription-backed execution from API billing and identify the observed account scope, measurement window and freshness where available, without exposing credentials. Missing usage or cost data SHALL remain unavailable, not zero. Account-level quota snapshots MUST NOT be attributed to a single mission. Separate subscriptions are separate entitlements; a common client does not pool their balances. Exhausting or losing subscription access MUST NOT silently enable API billing.
 
 ### 29.3 Model selection
 
 The counterpart MAY select among available OpenAI Codex models based on mission risk and complexity, subject to configured availability and cost. The exact initial routing policy SHALL be established during implementation against then-current model capabilities rather than frozen in this document.
+
+Model and reasoning-effort choices SHOULD be evaluated on representative tasks using accepted outcomes, corrections, latency and usage. Lower-effort execution and escalation are hypotheses to measure, not a universal default inferred from a demonstration. Any escalation remains within configured capability and spend limits.
 
 ---
 
@@ -2415,6 +2457,7 @@ The following are intentionally left for implementation or project onboarding:
 8. Which Sentry/BugSink source is used first.
 9. Whether semantic vector retrieval produces sufficient measured benefit to add pgvector.
 10. The authentication design required for later organizational distribution.
+11. Whether an alternative client such as BB or Herdr improves the operator workflow enough to adopt. An isolated trial does not change the Codex-first, OpenAI-only V1 execution contract or establish plugin, approval or recovery compatibility.
 
 These decisions do not block M0–M2. Project-specific decisions are resolved during M3 onboarding. No deferred decision authorizes a broader capability by default.
 
@@ -2448,6 +2491,10 @@ The architecture and constraints were informed by primary vendor documentation a
 - [Microsoft: Least privilege for AI agents](https://learn.microsoft.com/en-us/security/zero-trust/sfi/least-privilege-for-ai-agents)
 - [Playwright authentication](https://playwright.dev/docs/auth)
 
+The 2026-09-08 continuity and attention clarifications also consider [David Ondrej's workflow walkthrough](https://www.youtube.com/watch?v=c9nRxEy1kUY), his [companion workflow article](https://www.vectallabs.com/articles/0005-my-agentic-engineering-setup.html), and [Jason Liu's OpenAI workshop](https://www.youtube.com/watch?v=il1c1a2FufU). Their demonstrations inform design hypotheses; they do not establish ACP performance, permission policy or tool compatibility.
+
+Revision 1.0.2 draws on [Spotify's Portal/shunt article](https://engineering.atspotify.com/2026/9/portal-by-spotify-cut-my-claude-code-token-usage-by-90) for scoped retrieval and delegated I/O hypotheses. Its reported main-model context savings do not establish ACP total usage or cost savings; sections 26.3.1 and 29.2 define the required evaluation and accounting.
+
 ---
 
 ## 37. Definition of specification complete
@@ -2460,4 +2507,3 @@ This specification is ready to drive implementation when:
 - Changes thereafter are recorded through versioned specification updates or architecture decisions.
 
 The first implementation objective is not “build an autonomous agent.” It is to prove one durable, source-agnostic issue-delivery mission whose evidence, authority, candidate, external effects, lifecycle state, and completion can all be independently reconstructed and verified.
-

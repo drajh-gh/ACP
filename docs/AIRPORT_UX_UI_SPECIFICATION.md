@@ -2,12 +2,14 @@
 
 | Field | Value |
 |---|---|
-| Version | 0.2 |
-| Date | 2026-09-06 |
+| Version | 0.3 |
+| Date | 2026-09-08 |
 | Status | Proposed interaction specification; isolated synthetic Operations prototype available for review, production interface not implemented |
 | Product name | ACP, until David selects a replacement |
 | Product contract | [ACP product specification: airport operating model](ACP_PRODUCT_SPECIFICATION.md) |
 | Initial operator and project | David; SZS / SloSki |
+
+Version 0.3 adds explicit request-brief and attention presentation requirements. These are intended behavior for subsequent implementation; the existing synthetic prototype is not claimed to implement these additions.
 
 ## 1. Design brief
 
@@ -91,6 +93,8 @@ Request identifiers must be stable and copyable. A displayed gate must include i
 
 Filters and counts must describe their scope. If an all-active count includes passengers awaiting external work, it must not be presented as the number of decisions David needs to make.
 
+Make the reason for priority inspectable using actual impact, configured urgency, relevant waiting time and consequence of delay. Worker activity counts are supporting diagnostics and must not substitute for a required decision. Label unassessed priority and unknown data explicitly rather than inventing a ranking rationale.
+
 ### 4.2 Desktop wireframe
 
 This is a structural wireframe with illustrative data, not a screenshot of running work. The EX identifiers and states below are examples and do not assert the status of any real incident.
@@ -132,6 +136,8 @@ On wide desktop layouts, keep a roughly 480–600 px review workspace beside the
 ## 5. Passenger journey workspace
 
 The record header shows the real request subject, project, urgency and rationale, final outcome, current checkpoint, and next owner. It always distinguishes a proposed destination from an approved destination.
+
+Lead detail with a compact request brief: original request, established result, last meaningful change, outstanding work and next action/owner. Link to the supporting records and show observation time and coverage. Keep unassessed current status, unavailable obligations and stale observations visible alongside known facts. Recorded history must not acquire a live/verified badge merely because it has just been loaded. The same meaning must be recoverable in the counterpart without opening earlier coding conversations.
 
 The journey strip is the signature view. Each checkpoint exposes its purpose, status, evidence, and next action. Branches and repeated checks are represented honestly. Completed, current, future, blocked, incomplete, and not-required checkpoints remain distinct.
 
@@ -192,6 +198,8 @@ Passed acceptance conditions and missing or failed regression checks must remain
 ## 8. Waiting, blockers, and communication
 
 Waiting records show the reason, next owner, next wake condition, and outstanding obligations. A backlog item can display a production final outcome without appearing finished. A reactivation shows what changed and which checkpoint is eligible next.
+
+On return, show a short explanation such as “Linked ticket selected; scope approval needs refresh” when supported by records. Preserve the request identifier and link to the triggering event. Unchanged checks stay quiet; a material update must not erase the prior decision or imply that a stale permission has become valid again.
 
 Blocker resolution offers a specific input or handoff based on the actual missing condition. General text input, source links, file evidence, and scope decisions may be supported where appropriate. Credential entry uses ACP's secure readiness flow, never an ordinary comment field.
 
@@ -260,6 +268,8 @@ Compare the layout against the stated workflow rather than judging only its airp
 | UX-14 | Empty and disconnected states communicate different levels of source knowledge. |
 | UX-15 | No screen fabricates flight times, scan progress, capacity, or verification success. |
 | UX-16 | Illustrative prototype data cannot be mistaken for live operational facts. The interface uses ACP until David selects a replacement name. |
+| UX-17 | An unfamiliar request can be understood from its brief and linked evidence; history-only coverage, stale observations and unavailable obligations remain explicit. |
+| UX-18 | Priority and returning-work explanations identify supported reasons and the next action without inferring urgency from worker activity or announcing unchanged checks. |
 
 ## 13. Naming and design follow-through
 

@@ -2,8 +2,8 @@
 
 | Field | Value |
 |---|---|
-| Version | 0.3 |
-| Date | 2026-09-06 |
+| Version | 0.5 |
+| Date | 2026-09-08 |
 | Status | Review-ready draft; not yet an implementation-ready specification |
 | Product owner and initial operator | David |
 | Product name | ACP, until David selects a replacement |
@@ -14,6 +14,10 @@
 | Basis | Accepted product interview decisions, refined destinations and communication plans, and David's approved airport model and airport-management visual direction |
 
 Version 0.3 uses ACP as the current product name and ACP-PRODUCT-prefixed acceptance IDs. The airport operating model remains a way to organize requests and decisions, not a specification for real border-control or aviation software. A future name can change without changing request identity or operational meaning.
+
+Version 0.4 clarifies the request brief, recovery and attention behavior following the workflow-video review. It preserves the open destination and recurrence decisions and does not introduce another execution harness as a product dependency.
+
+Version 0.5 adds an efficiency acceptance scenario: bounded retrieval and delegation must preserve evidence quality, and savings claims must cover the observed work rather than only the main model's context. Existing proposed product policies remain open.
 
 ## 1. Product outcome and evidence
 
@@ -74,6 +78,8 @@ The [ACP specification](../SPECIFICATION.md) supplies durable missions, bounded 
 A passenger may coordinate several ACP missions over time. Passenger identity must not depend on one Codex task, worker session, or workflow run. ACP remains authoritative for execution records and receipts; the product must not manufacture a successful execution state from a UI action.
 
 The product imposes stricter V1 policy where necessary: implementation requires an approved scope, external sends require exact review, and production mutations remain manual. The command center also adds proposal and intent editing to ACP's original console scope; it must translate edits into versioned proposals rather than directly changing operational facts.
+
+Trying BB or another client is a separate operator-tool experiment. A shared interface may reduce app switching, but it does not establish shared subscription balances or replace ACP's durable request, approval and execution records. V1 provider scope remains governed by the technical specification.
 
 ## 3. Airport domain model
 
@@ -360,6 +366,12 @@ The primary action names the exact effect or decision. Approving scope, approvin
 
 David can edit a draft directly, give natural-language directions, request investigation, reject a proposed solution, defer work, resolve a blocker, or inspect supporting evidence. Cancelling a passenger, changing its final destination, and declining the underlying request are separately named actions with visible consequences.
 
+#### Request brief and recovery
+
+The counterpart and passenger workspace present a compact brief answering: what was requested, what is established, what changed, what remains owed, and what needs to happen next. It preserves the stable request identity, distinguishes reported wording from approved scope, links to supporting decisions and evidence, and shows observation time and coverage. Unknown or unavailable information is explicit; a recorded history alone cannot establish current status.
+
+The brief is derived from authoritative records, not a second editable task ledger. David should be able to recover an unfamiliar or resumed request without reopening its earlier coding conversations. A returning worker receives the relevant bounded context and references; neither a worker ending nor a summary being rewritten changes outstanding obligations, approval validity or closure. The first read-only increment may expose missing product records as unavailable while the full request contract is still being built.
+
 ### 10.3 Checkpoint and permission display
 
 Every displayed checkpoint has a condition, current status, evidence or missing-evidence explanation, and next owner. Use distinct states for Passed, Failed, Incomplete, Awaiting your decision, Waiting externally, and Not required.
@@ -385,6 +397,8 @@ Urgent production blockers may interrupt through a configured notification chann
 Live updates show their freshness and meaningful change. A row must not jump away while David is reading or acting on it. If a material update invalidates the open proposal, the action is disabled and the changed condition is explained; a stale detail view must not allow approval of an outdated effect.
 
 David can reprioritize or defer passengers. Correlated messages consolidate attention around the underlying matter. A returning ticket updates the same passenger and shows why it returned. Five simultaneous passengers should not require five open coding conversations to understand their next steps.
+
+Explain priority using configured impact, urgency, waiting time and consequence of delay. Activity volume or a worker finishing does not by itself make a request urgent. Returning work names the triggering change, eligible next step and any approval that needs refreshing. Routine unchanged progress generates no repeated notification; requested completion notices and material exceptions follow the configured policy.
 
 Budgets and host limits remain controlled by ACP, including Windows responsiveness. A visual capacity display must use actual admitted/queued work and configured capacity; it must not invent a flight schedule or an estimated completion time.
 
@@ -435,6 +449,8 @@ Measure human attention spent on investigation preparation, review, corrections,
 
 Also measure missed or duplicated matters, substantive corrections, time to a prepared decision, waiting time, reopened outcomes, required checks that could not run, communication completion, verification gaps, and cost per accepted outcome. Record severe regressions and unapproved effects separately from the handling-time metric.
 
+For continuity, measure the time and number of source/task openings needed to recover a request's next action from its brief. Keep active work, queue time and external waiting separate. Report subscription usage and API cost according to their actual measurement scope; unavailable data is not zero, and account-wide usage is not evidence of one request's cost. Compare model/effort settings only on comparable cases with outcome and correction evidence.
+
 Pilot evaluation expects no unapproved effects or unexplained lost cases in the observed sample. This is not a guarantee of future zero failures. Any failure requires a specific disposition before expansion.
 
 ### 13.3 Operational limits
@@ -479,6 +495,10 @@ Source or execution capabilities can be paused while preserving passengers, appr
 | ACP-PRODUCT-30 | A material event arrives while an effect proposal is open. | The proposal explains the drift, disables stale approval, and preserves the operator's board context. |
 | ACP-PRODUCT-31 | A passenger is inspected on a narrow screen or by keyboard. | The required decision, exact effect context, final outcome, and evidence limitations remain accessible. |
 | ACP-PRODUCT-32 | An airport-themed UI is shown with no live runtime activity. | It does not fabricate scan progress, flight times, capacity figures, or operational success. |
+| ACP-PRODUCT-33 | David or a fresh worker resumes an unfamiliar request. | A bounded brief preserves identity, original wording, recorded decisions, evidence references and known outstanding work without requiring earlier conversations; unsupported fields remain unavailable. |
+| ACP-PRODUCT-34 | A brief contains stale observations or only recorded mission associations. | Coverage and observation limits remain visible; the brief does not claim current readiness, no obligations, valid approval or completion. |
+| ACP-PRODUCT-35 | Several workers finish or repeated unchanged signals arrive. | The view explains meaningful changes and configured priority without duplicate requests, repeated notifications or urgency inferred from activity alone. |
+| ACP-PRODUCT-36 | Bounded retrieval or delegated reading is used to reduce model usage. | Relevant source evidence remains retrievable; a summary missing a decisive detail triggers source retrieval or an explicit gap. Evaluation compares accepted outcomes, coverage, total observed usage, latency and rework. Reporting includes coordinator, worker, retry, escalation and verification usage where attributable, marks incomplete totals as partial, and distinguishes main-model context reduction from total token or cost savings. |
 
 ## 15. Traceability to the accepted recommendations
 
