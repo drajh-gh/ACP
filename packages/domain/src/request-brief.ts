@@ -13,6 +13,8 @@ import {
   type RequestHistoryQuery,
 } from "./request-history.ts";
 import { snapshotJsonData } from "./json-snapshot.ts";
+import { canonicalJsonDigest } from "./effects.ts";
+import type { JsonValue } from "./validation.ts";
 import {
   expectArray,
   expectEnum,
@@ -216,6 +218,89 @@ export function assembleRequestBrief(value: unknown): RequestBrief {
   };
   snapshotJsonData(output, { maximumBytes: requestBriefMaximumBytes });
   return freeze(output);
+}
+
+/** Validates a previously assembled private brief against its exact selector.
+ * Pins are treated as opaque source identities; this boundary proves only the
+ * shape and internal consistency of the supplied projection. */
+export function parseRequestBrief(queryValue: unknown, value: unknown): RequestBrief {
+  const query = parseQuery(snapshotJsonData(queryValue, { maximumBytes: 1024 }));
+  const input = exact(snapshotJsonData(value, { maximumBytes: requestBriefMaximumBytes }), [
+    "schemaVersion", "projectId", "requestId", "originalRequest", "recordedAt", "assembledAt", "missions",
+    "evidence", "coverage", "freshness", "issues", "sourceChanges", "overflow", "unavailable",
+    "supportedNextAction", "authority",
+  ]);
+  if (input.projectId !== query.projectId || input.requestId !== query.requestId) {
+    throw new TypeError("request brief scope mismatch");
+  }
+  const missions = expectArray(input.missions, "request brief missions");
+  if (missions.length > requestBriefMissionLimit) throw new TypeError("request brief association overflow requires whole-result refusal");
+  const evidence = expectArray(input.evidence, "request brief evidence");
+  const changes = expectArray(input.sourceChanges, "request brief source changes");
+  const changeMap = new Map<string, string>();
+  for (const value of changes) {
+    const row = exact(value, ["source", "missionId", "pinBefore", "pinAfter"]);
+    const source = expectEnum(row.source, ["request_history", "mission_status", "attention"], "request brief source change");
+    const missionId = row.missionId === null ? null : parseStableId(row.missionId, "mission");
+    if ((source === "request_history") !== (missionId === null)) throw new TypeError("request brief source change scope mismatch");
+    const before = pin(row.pinBefore), after = pin(row.pinAfter), key = `${source}:${missionId ?? ""}`;
+    if (before === after || changeMap.has(key)) throw new TypeError("unique actual request brief source changes required");
+    changeMap.set(key, after);
+  }
+  const historyRef = evidence[0] as Record<string, unknown> | undefined;
+  const historyPin = referencePin(historyRef, "get_request_history");
+  const historyAfter = changedPin(changeMap, "request_history", null, historyPin);
+  const missionObservations: unknown[] = [], attention: unknown[] = [];
+  const associations: unknown[] = [];
+  for (const value of missions) {
+    const row = exact(value, ["association", "observation", "attention"]);
+    const association = exact(row.association, ["missionId", "reason", "recordedAt"]);
+    const missionId = parseStableId(association.missionId, "mission");
+    associations.push(association);
+    if (row.observation !== null) {
+      const observation = exact(row.observation, ["state", "observedAt", "freshness", "sourceReference"]);
+      const before = referencePin(observation.sourceReference, "get_mission_status");
+      missionObservations.push({ projectId: query.projectId, missionId, ...observation, pinBefore: before,
+        pinAfter: changedPin(changeMap, "mission_status", missionId, before) });
+    }
+    const attentionRow = expectRecord(row.attention, "request brief attention");
+    if (attentionRow.availability === "unavailable") exact(attentionRow, ["availability"]);
+    else {
+      const observed = exact(attentionRow, ["availability", "query", "asOf", "coverage", "freshness", "authority", "items", "nextCursor", "sourceReference"]);
+      if (observed.availability !== "observed") throw new TypeError("request brief attention availability required");
+      const selector = exact(observed.query, Object.hasOwn(expectRecord(observed.query, "attention query"), "afterItemId")
+        ? ["projectId", "missionId", "afterItemId", "limit"] : ["projectId", "missionId", "limit"]);
+      const before = referencePin(observed.sourceReference, "get_mission_attention");
+      attention.push({ queue: { schemaVersion: "1.0.0", projectId: selector.projectId, missionId: selector.missionId,
+        afterItemId: Object.hasOwn(selector, "afterItemId") ? selector.afterItemId : null, limit: selector.limit,
+        asOf: observed.asOf, coverage: observed.coverage, freshness: observed.freshness, authority: observed.authority,
+        items: observed.items, nextCursor: observed.nextCursor }, pinBefore: before,
+        pinAfter: changedPin(changeMap, "attention", missionId, before) });
+    }
+  }
+  if (changeMap.size !== 0) throw new TypeError("request brief source change has no matching source");
+  const original = expectRecord(input.originalRequest, "request brief original request");
+  const assembled = assembleRequestBrief({ query, assembledAt: input.assembledAt,
+    history: { schemaVersion: "1.0.0", asOf: historyRef?.observedAt, request: original, recordedAt: input.recordedAt,
+      missionAssociations: associations, coverage: "recorded_associations_only", freshness: "not_assessed", authority: "not_granted" },
+    historyPinBefore: historyPin, historyPinAfter: historyAfter, missionObservations, attention });
+  if (canonicalJsonDigest(input as JsonValue) !== canonicalJsonDigest(assembled as unknown as JsonValue)) {
+    throw new TypeError("request brief conflicts with its canonical assembled projection");
+  }
+  return assembled;
+}
+
+function referencePin(value: unknown, read: ScopedEvidenceReference["read"]): string {
+  const row = expectRecord(value, "request brief evidence reference");
+  if (row.read !== read) throw new TypeError("request brief evidence reference mismatch");
+  return pin(row.pin);
+}
+
+function changedPin(changes: Map<string, string>, source: RequestBriefSourceChange["source"], missionId: StableId<"mission"> | null, before: string): string {
+  const key = `${source}:${missionId ?? ""}`, after = changes.get(key);
+  if (after === undefined) return before;
+  changes.delete(key);
+  return after;
 }
 
 function parseSources(value: unknown): RequestBriefSources {

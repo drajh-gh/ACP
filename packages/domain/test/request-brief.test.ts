@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { it } from "node:test";
 import {
   assembleRequestBrief,
+  parseRequestBrief,
   requestBriefMissionLimit,
   requestBriefSourceMaximumBytes,
   type RequestBriefSources,
@@ -265,4 +266,67 @@ it("keeps unsupported records and every action authority explicitly unavailable"
   assert.equal(brief.supportedNextAction, "unavailable");
   assert.equal(brief.authority, "not_granted");
   for (const field of ["priority", "approval", "ready", "completed"]) assert.equal(field in brief, false);
+});
+
+it("roundtrips valid complete, missing, stale and changed briefs without semantic loss", () => {
+  const cases = [sources(), (() => { const value = sources(); Object.assign(value, { missionObservations: [], attention: [] }); return value; })(),
+    (() => { const value = sources(); Object.assign(value.missionObservations[0]!, { freshness: "stale", pinAfter: "mission-revision-2" });
+      Object.assign(value, { historyPinAfter: "history-revision-2", attention: [attentionSource({}, "attention-revision-2")] }); return value; })()];
+  for (const source of cases) {
+    const assembled = assembleRequestBrief(source), parsed = parseRequestBrief({ projectId, requestId }, assembled);
+    assert.deepEqual(parsed, assembled);
+    assert.ok(Object.isFrozen(parsed) && Object.isFrozen(parsed.missions) && Object.isFrozen(parsed.originalRequest));
+  }
+});
+
+it("rejects foreign selectors, substituted and duplicate evidence, pins, issues and changes", () => {
+  const valid = assembleRequestBrief(sources());
+  assert.throws(() => parseRequestBrief({ projectId: createStableId("project"), requestId }, valid), /scope mismatch/u);
+  assert.throws(() => parseRequestBrief({ projectId, requestId: createStableId("request") }, valid), /scope mismatch/u);
+  for (const [label, mutate] of [
+    ["selector", (value: any) => { value.evidence[0].selectors.requestId = createStableId("request"); }],
+    ["duplicate evidence", (value: any) => { value.evidence.push(value.evidence[0]); }],
+    ["substituted pin", (value: any) => { value.missions[0].observation.sourceReference = {
+      ...value.missions[0].observation.sourceReference, pin: "substituted" }; }],
+    ["issues", (value: any) => { value.issues = ["missing_attention"]; }],
+    ["changes", (value: any) => { value.sourceChanges = [{ source: "attention", missionId, pinBefore: "attention-revision-1", pinAfter: "changed" },
+      { source: "attention", missionId, pinBefore: "attention-revision-1", pinAfter: "other" }]; }],
+  ] as const) {
+    const value: any = structuredClone(valid); mutate(value);
+    assert.throws(() => parseRequestBrief({ projectId, requestId }, value), `${label} must be rejected`);
+  }
+});
+
+it("rejects invented authority, empty obligations, altered wording and noncanonical microseconds", () => {
+  const valid = assembleRequestBrief(sources());
+  for (const mutate of [
+    (value: any) => { value.authority = "approved"; },
+    (value: any) => { value.unavailable = ["destination_decisions", "communications"]; value.obligations = []; },
+    (value: any) => { value.originalRequest.summary = " "; },
+    (value: any) => { value.assembledAt = "2026-09-08T12:01:00.0000001Z"; },
+  ]) {
+    const value: any = structuredClone(valid); mutate(value);
+    assert.throws(() => parseRequestBrief({ projectId, requestId }, value));
+  }
+});
+
+it("rejects malformed nonplain, accessor, cyclic and oversized inputs without invoking code", () => {
+  const valid: any = structuredClone(assembleRequestBrief(sources()));
+  assert.throws(() => parseRequestBrief({ projectId, requestId }, new (class Brief {})()));
+  let calls = 0; const accessor = structuredClone(valid);
+  Object.defineProperty(accessor, "authority", { enumerable: true, get() { calls++; return "not_granted"; } });
+  assert.throws(() => parseRequestBrief({ projectId, requestId }, accessor), /bounded snapshot/u); assert.equal(calls, 0);
+  const cyclic = structuredClone(valid); cyclic.loop = cyclic;
+  assert.throws(() => parseRequestBrief({ projectId, requestId }, cyclic), /bounded snapshot/u);
+  const oversized = structuredClone(valid); oversized.originalRequest.summary = "x".repeat(requestBriefSourceMaximumBytes);
+  assert.throws(() => parseRequestBrief({ projectId, requestId }, oversized), /bounded snapshot/u);
+});
+
+it("returns a detached brief whose nested mutations cannot affect caller input", () => {
+  const input: any = structuredClone(assembleRequestBrief(sources()));
+  const parsed = parseRequestBrief({ projectId, requestId }, input);
+  input.originalRequest.summary = "mutated";
+  input.missions[0].association.reason = "mutated";
+  assert.equal(parsed.originalRequest.summary, "Keep the reporter's original wording, not an approved destination.");
+  assert.equal(parsed.missions[0]?.association.reason, "Recorded investigation link");
 });

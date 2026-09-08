@@ -152,6 +152,14 @@ and cancellation behavior; no production binding or end-to-end deadline is prove
 The separate [BB trial assessment](../research/BB_TRIAL_ASSESSMENT.md) records
 the checked version, local prerequisites, account checks and stop procedure.
 
+A pure private transport parser now validates an already assembled brief against
+its exact project/request selector and canonical assembler semantics. It rejects
+extra, substituted, duplicate, contradictory, oversized or unsafe JSON data and
+returns a detached deeply immutable projection. Source pins remain opaque identity
+tokens: this boundary checks their internal references and change declarations but
+does not verify remote source content, perform I/O, or expose an API, worker, MCP,
+UI, database or provider binding.
+
 After the policy decisions below, implement versioned destination/scope proposals,
 obligations, communication plans and decisions.
 Bind the board's exact projection and stale-action checks to real retained records.
